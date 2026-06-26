@@ -105,7 +105,33 @@ app.post('/webhook', async (req, res) => {
 app.get('/debug-logs', (req, res) => {
     res.json({ total_recibidos: logsMensajes.length, logs: logsMensajes });
 });
+// 3. ENDPOINT DE PRUEBA SIMULADA (Para saltear a Meta temporalmente)
+app.get('/debug-test', async (req, res) => {
+    const numeroPrueba = "5491123456789"; // Un número de teléfono simulado
+    console.log(`🧪 SIMULACIÓN -> Forzando registro de llavero para ${numeroPrueba}`);
+    
+    // Intentamos inyectar el dato en Supabase exactamente como lo haría el bot
+    const { data, error } = await supabase
+        .from('llaveros') 
+        .insert([
+            { 
+                telefono_usuario: numeroPrueba, 
+                estado: 'proceso_registro_simulado',
+                fecha_registro: new Date()
+            }
+        ]);
 
+    if (error) {
+        console.error('❌ Error en simulación de Supabase:', error.message);
+        return res.status(500).json({ status: "Error", detalle: error.message });
+    }
+    
+    return res.json({ 
+        status: "Éxito", 
+        mensaje: "Se envió la orden de guardado a Supabase correctamente.",
+        datos_enviados: { telefono_usuario: numeroPrueba }
+    });
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Servidor GFinder 100% interactivo corriendo en puerto ${PORT}`);
