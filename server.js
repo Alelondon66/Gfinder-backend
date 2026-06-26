@@ -1,5 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const axios = require('axios'); // Usaremos axios para pegarle a Meta de forma limpia
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -7,30 +8,51 @@ app.use(bodyParser.json());
 
 const WEBHOOK_VERIFY_TOKEN = 'gfinder_axion_token_seguro_2026';
 
-// CONEXIÓN SEGURA CON SUPABASE (Usa las variables de entorno de Railway)
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
+// CONEXIONES
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const logsMensajes = [];
 
-// 1. ENDPOINT DE VERIFICACIÓN (HANDSHAKE)
+// FUNCIÓN PARA ENVIAR WHATSAPP (LA VOZ DEL BOT)
+async function enviarMensajeWhatsApp(telefonoDestino, textoEnviar) {
+    const url = `https://graph.facebook.com/v25.0/${process.env.WA_PHONE_NUMBER_ID}/messages`;
+    
+    const payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: telefonoDestino,
+        type: "text",
+        text: {
+            preview_url: false,
+            body: textoEnviar
+        }
+    };
+
+    try {
+        await axios.post(url, payload, {
+            headers: {
+                'Authorization': `Bearer ${process.env.WA_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log(`📤 Mensaje enviado con éxito a [${telefonoDestino}]`);
+    } catch (error) {
+        console.error('❌ Error enviando mensaje por Meta:', error.response?.data || error.message);
+    }
+}
+
+// 1. ENDPOINT DE VERIFICACIÓN
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    if (mode && token) {
-        if (mode === 'subscribe' && token === WEBHOOK_VERIFY_TOKEN) {
-            console.log('✅ Webhook verificado con éxito por Meta.');
-            return res.status(200).send(challenge);
-        } else {
-            return res.status(403).sendStatus(403);
-        }
+    if (mode && token && mode === 'subscribe' && token === WEBHOOK_VERIFY_TOKEN) {
+        return res.status(200).send(challenge);
     }
+    return res.status(403).sendStatus(403);
 });
 
-// 2. ENDPOINT PRINCIPAL (RECEPCIÓN Y ESCRITURA EN BD)
+// 2. ENDPOINT PRINCIPAL (RECEPCIÓN, ENRUTADOR Y RESPUESTA)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
     logsMensajes.push({ fecha: new Date(), data: body });
@@ -43,57 +65,48 @@ app.post('/webhook', async (req, res) => {
 
         if (messages && messages[0]) {
             const messageData = messages[0];
-            const from = messageData.from; // Teléfono del usuario
+            const from = messageData.from; 
 
             if (messageData.type === 'text') {
                 const text = messageData.text.body.trim().toLowerCase();
-                console.log(`💬 Mensaje real de [${from}]: "${text}"`);
+                console.log(`💬 Mensaje entrante de [${from}]: "${text}"`);
 
-                // FLUJO INTERACTIVO GFINDER
-                if (text === 'hola' || text === 'menu') {
-                    console.log(`🤖 ENRUTADOR -> Desplegando Menú Principal a ${from}`);
-                    // Aquí irá la función para enviarle el texto del menú por WhatsApp
+                // 🤖 RESPUESTA INTERACTIVA
+                if (text === 'hola' || text === 'menu' || text === 'inicio') {
+                    const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nPor favor, elegí una opción respondiendo con el número:\n\n*1.* Registrar mi llavero nuevo.\n*2.* Encontré un llavero perdido.\n*3.* Reportar mi llavero extraviado.`;
+                    await enviarMensajeWhatsApp(from, menuTexto);
                 } 
                 
-                // SIMULACIÓN DE REGISTRO EN BASE DE DATOS (OPCIÓN 1)
-                else if (text === '1' || text === 'registrar') {
-                    console.log(`💾 BD -> Intentando registrar llavero de prueba para ${from}`);
-                    
-                    // Grabamos en la tabla de Supabase (asumiendo columnas estándar del MVP)
-                    const { data, error } = await supabase
-                        .from('llaveros') // Cambiar por el nombre exacto de tu tabla si es diferente
-                        .insert([
-                            { 
-                                telefono_usuario: from, 
-                                estado: 'registrado',
-                                fecha_registro: new Date()
-                            }
-                        ]);
+                else if (text === '1') {
+                    // Simulación de guardado rápido en Supabase
+                    const { error } = await supabase
+                        .from('llaveros') 
+                        .insert([{ telefono_usuario: from, estado: 'proceso_registro', fecha_registro: new Date() }]);
 
                     if (error) {
-                        console.error('❌ Error guardando en Supabase:', error.message);
+                        console.error('❌ Error Supabase:', error.message);
+                        await enviarMensajeWhatsApp(from, "⚠️ Hubo un problema al iniciar el registro. Por favor, intenta de nuevo.");
                     } else {
-                        console.log('🎉 ¡Llavero guardado con éxito en Supabase!', data);
+                        await enviarMensajeWhatsApp(from, "💾 ¡Perfecto! Iniciamos el registro de tu llavero. Por favor, escribí el código alfanumérico que figura en tu tarjeta.");
                     }
+                } 
+                
+                else {
+                    await enviarMensajeWhatsApp(from, "🤖 No entendí esa opción. Escribí *Hola* para volver al menú principal.");
                 }
             }
         }
         return res.status(200).send('EVENT_RECEIVED');
-    } else {
-        return res.sendStatus(404);
     }
+    return res.sendStatus(404);
 });
 
-// LINK DE AUDITORÍA
+// DEBUG
 app.get('/debug-logs', (req, res) => {
-    res.json({
-        total_recibidos: logsMensajes.length,
-        conexion_supabase: !!supabaseUrl,
-        logs: logsMensajes
-    });
+    res.json({ total_recibidos: logsMensajes.length, logs: logsMensajes });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor GFinder conectado a Supabase en puerto ${PORT}`);
+    console.log(`🚀 Servidor GFinder 100% interactivo corriendo en puerto ${PORT}`);
 });
