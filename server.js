@@ -1,6 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const axios = require('axios'); // Usaremos axios para pegarle a Meta de forma limpia
+const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -63,19 +63,35 @@ app.post('/webhook', async (req, res) => {
         const value = changes?.value;
         const messages = value?.messages;
 
-        else if (text === '1') {
+        if (messages && messages[0]) {
+            const messageData = messages[0];
+            const from = messageData.from; 
+
+            if (messageData.type === 'text') {
+                const text = messageData.text.body.trim().toLowerCase();
+                console.log(`💬 Mensaje entrante de [${from}]: "${text}"`);
+
+                // 🤖 RESPUESTA INTERACTIVA - MENÚ PRINCIPAL
+                if (text === 'hola' || text === 'menu' || text === 'inicio') {
+                    const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nPor favor, elegí una opción respondiendo con el número:\n\n*1.* Registrar mi llavero nuevo.\n*2.* Encontré un llavero perdido.\n*3.* Reportar mi llavero extraviado.`;
+                    await enviarMensajeWhatsApp(from, menuTexto);
+                } 
+                
+                // OPCIÓN 1: REGISTRAR LLAVERO
+                else if (text === '1') {
                     const { error } = await supabase
                         .from('llaveros') 
                         .insert([{ telefono_usuario: from, estado: 'proceso_registro', fecha_registro: new Date() }]);
 
                     if (error) {
-                        console.error('❌ Error Supabase:', error.message);
+                        console.error('❌ Error Supabase Opcion 1:', error.message);
                         await enviarMensajeWhatsApp(from, "⚠️ Hubo un problema al iniciar el registro. Por favor, intenta de nuevo.");
                     } else {
                         await enviarMensajeWhatsApp(from, "💾 ¡Perfecto! Iniciamos el registro de tu llavero. Por favor, escribí el código alfanumérico que figura en tu tarjeta.");
                     }
                 } 
                 
+                // OPCIÓN 2: ENCONTRÉ LLAVERO PERDIDO
                 else if (text === '2') {
                     const { error } = await supabase
                         .from('llaveros') 
@@ -89,6 +105,7 @@ app.post('/webhook', async (req, res) => {
                     }
                 }
 
+                // OPCIÓN 3: REPORTAR EXTRAVÍO
                 else if (text === '3') {
                     const { error } = await supabase
                         .from('llaveros') 
@@ -102,20 +119,7 @@ app.post('/webhook', async (req, res) => {
                     }
                 }
                 
-                else {
-                    await enviarMensajeWhatsApp(from, "🤖 No entendí esa opción. Escribí *Hola* para volver al menú principal.");
-                }                    const { error } = await supabase
-                        .from('llaveros') 
-                        .insert([{ telefono_usuario: from, estado: 'proceso_registro', fecha_registro: new Date() }]);
-
-                    if (error) {
-                        console.error('❌ Error Supabase:', error.message);
-                        await enviarMensajeWhatsApp(from, "⚠️ Hubo un problema al iniciar el registro. Por favor, intenta de nuevo.");
-                    } else {
-                        await enviarMensajeWhatsApp(from, "💾 ¡Perfecto! Iniciamos el registro de tu llavero. Por favor, escribí el código alfanumérico que figura en tu tarjeta.");
-                    }
-                } 
-                
+                // RESPUESTA SI TIPIAN OTRA COSA
                 else {
                     await enviarMensajeWhatsApp(from, "🤖 No entendí esa opción. Escribí *Hola* para volver al menú principal.");
                 }
@@ -126,37 +130,11 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(404);
 });
 
-// DEBUG
+// DEBUG LOGS
 app.get('/debug-logs', (req, res) => {
     res.json({ total_recibidos: logsMensajes.length, logs: logsMensajes });
 });
-// 3. ENDPOINT DE PRUEBA SIMULADA (Para saltear a Meta temporalmente)
-app.get('/debug-test', async (req, res) => {
-    const numeroPrueba = "5491123456789"; // Un número de teléfono simulado
-    console.log(`🧪 SIMULACIÓN -> Forzando registro de llavero para ${numeroPrueba}`);
-    
-    // Intentamos inyectar el dato en Supabase exactamente como lo haría el bot
-    const { data, error } = await supabase
-        .from('llaveros') 
-        .insert([
-            { 
-                telefono_usuario: numeroPrueba, 
-                estado: 'proceso_registro_simulado',
-                fecha_registro: new Date()
-            }
-        ]);
 
-    if (error) {
-        console.error('❌ Error en simulación de Supabase:', error.message);
-        return res.status(500).json({ status: "Error", detalle: error.message });
-    }
-    
-    return res.json({ 
-        status: "Éxito", 
-        mensaje: "Se envió la orden de guardado a Supabase correctamente.",
-        datos_enviados: { telefono_usuario: numeroPrueba }
-    });
-});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Servidor GFinder 100% interactivo corriendo en puerto ${PORT}`);
