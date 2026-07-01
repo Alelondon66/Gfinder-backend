@@ -63,23 +63,48 @@ app.post('/webhook', async (req, res) => {
         const value = changes?.value;
         const messages = value?.messages;
 
-        if (messages && messages[0]) {
-            const messageData = messages[0];
-            const from = messageData.from; 
+        else if (text === '1') {
+                    const { error } = await supabase
+                        .from('llaveros') 
+                        .insert([{ telefono_usuario: from, estado: 'proceso_registro', fecha_registro: new Date() }]);
 
-            if (messageData.type === 'text') {
-                const text = messageData.text.body.trim().toLowerCase();
-                console.log(`💬 Mensaje entrante de [${from}]: "${text}"`);
-
-                // 🤖 RESPUESTA INTERACTIVA
-                if (text === 'hola' || text === 'menu' || text === 'inicio') {
-                    const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nPor favor, elegí una opción respondiendo con el número:\n\n*1.* Registrar mi llavero nuevo.\n*2.* Encontré un llavero perdido.\n*3.* Reportar mi llavero extraviado.`;
-                    await enviarMensajeWhatsApp(from, menuTexto);
+                    if (error) {
+                        console.error('❌ Error Supabase:', error.message);
+                        await enviarMensajeWhatsApp(from, "⚠️ Hubo un problema al iniciar el registro. Por favor, intenta de nuevo.");
+                    } else {
+                        await enviarMensajeWhatsApp(from, "💾 ¡Perfecto! Iniciamos el registro de tu llavero. Por favor, escribí el código alfanumérico que figura en tu tarjeta.");
+                    }
                 } 
                 
-                else if (text === '1') {
-                    // Simulación de guardado rápido en Supabase
+                else if (text === '2') {
                     const { error } = await supabase
+                        .from('llaveros') 
+                        .insert([{ telefono_usuario: from, estado: 'encontre_perdido', fecha_registro: new Date() }]);
+
+                    if (error) {
+                        console.error('❌ Error Supabase Opcion 2:', error.message);
+                        await enviarMensajeWhatsApp(from, "⚠️ Hubo un problema técnico. Por favor, intenta de nuevo.");
+                    } else {
+                        await enviarMensajeWhatsApp(from, "🔍 ¡Muchas gracias por reportarlo! Por favor, indícanos el código alfanumérico que figura en el llavero que encontraste.");
+                    }
+                }
+
+                else if (text === '3') {
+                    const { error } = await supabase
+                        .from('llaveros') 
+                        .insert([{ telefono_usuario: from, estado: 'reporte_extravio', fecha_registro: new Date() }]);
+
+                    if (error) {
+                        console.error('❌ Error Supabase Opcion 3:', error.message);
+                        await enviarMensajeWhatsApp(from, "⚠️ Hubo un problema técnico. Por favor, intenta de nuevo.");
+                    } else {
+                        await enviarMensajeWhatsApp(from, "🚨 Lamentamos el inconveniente. Vamos a ayudarte a encontrarlo. Por favor, ingresá el código de tu llavero extraviado.");
+                    }
+                }
+                
+                else {
+                    await enviarMensajeWhatsApp(from, "🤖 No entendí esa opción. Escribí *Hola* para volver al menú principal.");
+                }                    const { error } = await supabase
                         .from('llaveros') 
                         .insert([{ telefono_usuario: from, estado: 'proceso_registro', fecha_registro: new Date() }]);
 
