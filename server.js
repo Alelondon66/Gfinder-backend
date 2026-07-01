@@ -11,34 +11,12 @@ const WEBHOOK_VERIFY_TOKEN = 'gfinder_axion_token_seguro_2026';
 // CONEXIONES
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// FUNCIÓN PARA VALIDAR EL NUEVO FORMATO: AA0000AB (8 caracteres)
+// FUNCIÓN PARA VALIDAR EL NUEVO FORMATO: AA0000AB (Formato libre de trabas matemáticas)
 function validarCodigoGFinder(codigo) {
     const clean = codigo.toUpperCase().trim();
-    // Expresión regular: 2 letras, 4 números, 2 letras finales = 8 caracteres
+    // Expresión regular pura: 2 letras, 4 números, 2 letras finales = 8 caracteres
     const regexFormato = /^[A-Z]{2}[0-9]{4}[A-Z]{2}$/;
-    if (!regexFormato.test(clean)) return false;
-
-    // Desarmamos las partes para el algoritmo matemático
-    let suma = 0;
-    
-    // Ponderar las 2 primeras letras
-    suma += (clean.charCodeAt(0) - 64) * 1;
-    suma += (clean.charCodeAt(1) - 64) * 2;
-    
-    // Ponderar los 4 números del medio
-    for (let i = 2; i < 6; i++) {
-        suma += parseInt(clean.charAt(i)) * (i + 1);
-    }
-    
-    // Ponderar la primera letra del bloque final (posición 6)
-    suma += (clean.charCodeAt(6) - 64) * 7;
-
-    // Calcular cuál debería ser la última letra (Dígito Verificador en posición 7)
-    const resto = (suma % 26);
-    const digitoTeorico = String.fromCharCode(65 + resto); // 65 es 'A'
-
-    // Retorna true si la última letra coincide perfectamente con el cálculo
-    return clean.charAt(7) === digitoTeorico;
+    return regexFormato.test(clean); 
 }
 
 // FUNCIÓN PARA ENVIAR WHATSAPP
@@ -143,7 +121,7 @@ app.post('/webhook', async (req, res) => {
                     // OPCIÓN 1: ACTIVAR
                     if (usuarioProceso.estado === 'esperando_codigo_registro') {
                         if (!validarCodigoGFinder(text)) {
-                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Debe tener el formato AA0000AB (2 letras, 4 números y 2 letras). Intentá de nuevo o escribí *Cancelar*.");
+                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Debe tener el formato AA0000AB (2 letras, 4 números y 2 letras). Intentá de nuevo:");
                         } else {
                             await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'completado' }).eq('id', usuarioProceso.id);
                             await enviarMensajeWhatsApp(from, "🎉 ¡Espectacular! Tu llavero ha sido activado con éxito. Tu información ya está protegida.");
@@ -153,7 +131,7 @@ app.post('/webhook', async (req, res) => {
                     // OPCIÓN 2: ENCONTRÉ (VALIDAR CÓDIGO)
                     else if (usuarioProceso.estado === 'esperando_codigo_encuentro') {
                         if (!validarCodigoGFinder(text)) {
-                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Revisalo e intentá de nuevo o escribí *Cancelar*.");
+                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Debe tener el formato AA0000AB. Revisalo e intentá de nuevo:");
                         } else {
                             await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'esperando_subopcion_encuentro' }).eq('id', usuarioProceso.id);
                             const subMenuEncuentro = `✅ ¡Código verificado!\n\n¿Qué deseas hacer ahora? Selecciona el número:\n\n*1.* Donde devolverlo\n*2.* Contactar al dueño`;
@@ -189,7 +167,7 @@ app.post('/webhook', async (req, res) => {
                     else if (usuarioProceso.estado.startsWith('esperando_codigo_personal_suc_')) {
                         const sucursal = usuarioProceso.estado.replace('esperando_codigo_personal_suc_', '');
                         if (!validarCodigoGFinder(text)) {
-                            await enviarMensajeWhatsApp(from, "❌ Código de llavero inválido. Por favor, revísalo e ingresalo de nuevo:");
+                            await enviarMensajeWhatsApp(from, "❌ Código de llavero inválido. Por favor, ingresalo con formato AA0000AB:");
                         } else {
                             await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'completado' }).eq('id', usuarioProceso.id);
                             await enviarMensajeWhatsApp(from, `⚙️ Registro completado para Sucursal ${sucursal}. Sistema procesando alertas.`);
@@ -206,5 +184,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor GFinder corriendo con nuevo formato AA0000AB`);
+    console.log(`🚀 Servidor GFinder corriendo libre con formato AA0000AB`);
 });
