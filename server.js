@@ -14,7 +14,6 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // FUNCIÓN PARA VALIDAR EL DÍGITO VERIFICADOR (ALGORITMO GFINDER)
 function validarCodigoGFinder(codigo) {
     const clean = codigo.toUpperCase().trim();
-    // Expresión regular: 3 letras (A-Z), 4 números, 1 letra verificadora (A-Z) = 8 caracteres
     const regexFormato = /^[A-Z]{3}[0-9]{4}[A-Z]$/;
     if (!regexFormato.test(clean)) return false;
 
@@ -22,20 +21,16 @@ function validarCodigoGFinder(codigo) {
     const numeros = clean.substring(3, 7);
     const digitoRecibido = clean.charAt(7);
 
-    // Algoritmo matemático para calcular el dígito verificador teórico
     let suma = 0;
-    // Ponderar las letras según su posición en el abecedario (A=1, B=2...)
     for (let i = 0; i < 3; i++) {
         suma += (letras.charCodeAt(i) - 64) * (i + 1);
     }
-    // Ponderar los números
     for (let i = 0; i < 4; i++) {
         suma += parseInt(numeros.charAt(i)) * (i + 4);
     }
 
-    // Convertir el resultado de la suma en una letra verificadora (A-Z)
     const resto = (suma % 26);
-    const digitoTeorico = String.fromCharCode(65 + resto); // 65 es 'A' en ASCII
+    const digitoTeorico = String.fromCharCode(65 + resto);
 
     return digitoRecibido === digitoTeorico;
 }
@@ -60,11 +55,11 @@ async function enviarMensajeWhatsApp(telefonoDestino, textoEnviar) {
         });
         console.log(`📤 Mensaje enviado a [${telefonoDestino}]`);
     } catch (error) {
-        console.error('❌ Error enviando mensaje por Meta:', error.response?.data || error.message);
+        console.error('❌ Error Meta:', error.response?.data || error.message);
     }
 }
 
-// 1. ENDPOINT DE VERIFICACIÓN (WEBHOOK)
+// 1. ENDPOINT DE VERIFICACIÓN
 app.get('/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -76,7 +71,7 @@ app.get('/webhook', (req, res) => {
     return res.status(403).sendStatus(403);
 });
 
-// 2. ENDPOINT PRINCIPAL
+// 2. ENDPOINT PRINCIPAL (RECEPCIÓN Y LÓGICA)
 app.post('/webhook', async (req, res) => {
     const body = req.body;
 
@@ -89,29 +84,18 @@ app.post('/webhook', async (req, res) => {
         if (messages && messages[0]) {
             const messageData = messages[0];
             const from = messageData.from; 
-            if (messages && messages[0]) {
-            const messageData = messages[0];
-            const from = messageData.from; 
 
-            // 🛡️ FILTRO DE SEGURIDAD CONTRA BUCLES
+            // 🛡️ FILTRO DE SEGURIDAD CONTRA BUCLES INDEVIDOS
             if (value.statuses || from === process.env.WA_PHONE_NUMBER_ID) {
                 return res.status(200).send('EVENT_RECEIVED');
             }
 
             if (messageData.type === 'text') {
-            
-            // Evitar el bucle infinito: Si el mensaje no es de un usuario, ignorarlo
-if (value.statuses || messageData.from === process.env.WA_PHONE_NUMBER_ID) {
-    return res.status(200).send('EVENT_RECEIVED');
-}
-            
-
-            if (messageData.type === 'text') {
                 const text = messageData.text.body.trim().toUpperCase();
-                console.log(`💬 Mensaje entrante de [${from}]: "${text}"`);
+                console.log(`💬 Mensaje de [${from}]: "${text}"`);
 
-                // Buscar si este usuario ya inició un proceso que no esté completado
-                const { data: usuarioProceso, error: errorBuscar } = await supabase
+                // Buscar proceso activo (no completado)
+                const { data: usuarioProceso } = await supabase
                     .from('llaveros')
                     .select('*')
                     .eq('telefono_usuario', from)
@@ -120,58 +104,106 @@ if (value.statuses || messageData.from === process.env.WA_PHONE_NUMBER_ID) {
                     .limit(1)
                     .maybeSingle();
 
-                // SI NO TIENE NINGÚN PROCESO ACTIVO -> LE MOSTRAMOS EL MENÚ PRINCIPAL
+                // ---------------------------------------------------------
+                // FLUJO A: SIN PROCESO ACTIVO (MENÚ PRINCIPAL)
+                // ---------------------------------------------------------
                 if (!usuarioProceso) {
-                    if (text === 'HOLA' || text === 'MENU' || text === 'INICIO') {
-                        const menuTexto = `¡Bienvenido a *GFinder*! 🔑🔍\n\nPor favor, elegí una opción respondiendo con el número:\n\n*1.* Registrar mi llavero nuevo.\n*2.* Encontré un llavero perdido.\n*3.* Reportar mi llavero extraviado.`;
+                    if (text === 'HOLA' || text === 'MENU' || text === 'INICIO' || text === 'CANCELAR') {
+                        const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nPor favor, elegí una opción respondiendo con el número:\n\n*1.* Activar llavero\n*2.* Encontré un llavero`;
                         await enviarMensajeWhatsApp(from, menuTexto);
-                    } else if (text === '1') {
+                    } 
+                    else if (text === '1') {
                         await supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_codigo_registro', fecha_registro: new Date() }]);
                         await enviarMensajeWhatsApp(from, "💾 ¡Perfecto! Vamos a registrar tu llavero. Por favor, ingresá el código de 8 caracteres (ejemplo: ABC1234X).");
-                    } else if (text === '2') {
+                    } 
+                    else if (text === '2') {
                         await supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_codigo_encuentro', fecha_registro: new Date() }]);
-                        await enviarMensajeWhatsApp(from, "🔍 ¡Muchas gracias por tu solidaridad! Por favor, ingresá el código de 8 caracteres que figura en el llavero encontrado.");
-                    } else if (text === '3') {
-                        await supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_codigo_extravio', fecha_registro: new Date() }]);
-                        await enviarMensajeWhatsApp(from, "🚨 Vamos a ayudarte a encontrarlo. Por favor, ingresá el código de 8 caracteres de tu llavero extraviado.");
-                    } else {
-                        await enviarMensajeWhatsApp(from, "🤖 Hola! Para comenzar escribe *Hola* para ver nuestro menú de opciones.");
+                        await enviarMensajeWhatsApp(from, "🔍 ¡Muchas gracias por reportarlo! Por favor, indícanos el código de 8 caracteres del llavero encontrado.");
+                    } 
+                    else if (text === '9') {
+                        // Opción oculta para personal de la estación
+                        await supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_sucursal_personal', fecha_registro: new Date() }]);
+                        await enviarMensajeWhatsApp(from, "⛽ *Acceso Personal AXION*\n\nPor favor, ingresá el número de sucursal (4 dígitos):");
+                    } 
+                    else {
+                        await enviarMensajeWhatsApp(from, "🤖 Escribí *Hola* para ver el menú de opciones.");
                     }
                 } 
                 
-                // SI YA TIENE UN PROCESO ACTIVO -> EL MENSAJE ES EL CÓDIGO DEL LLAVERO
+                // ---------------------------------------------------------
+                // FLUJO B: CON PROCESO ACTIVO (ACCIONES PASO A PASO)
+                // ---------------------------------------------------------
                 else {
-                    // Si el usuario quiere cancelar el flujo actual
-                    if (text === 'CANCELAR' || text === 'HOLA' || text === 'MENU') {
-                        await supabase.from('llaveros').delete().eq('id', usuarioProceso.id); // Borramos el estado incompleto
-                        const menuTexto = `Fluxo cancelado. Volvemos al menú principal:\n\n*1.* Registrar mi llavero nuevo.\n*2.* Encontré un llavero perdido.\n*3.* Reportar mi llavero extraviado.`;
-                        await enviarMensajeWhatsApp(from, menuTexto);
+                    if (text === 'CANCELAR' || text === 'MENU') {
+                        await supabase.from('llaveros').delete().eq('id', usuarioProceso.id);
+                        await enviarMensajeWhatsApp(from, "🔄 Proceso cancelado. Escribí *Hola* para volver a empezar.");
                         return res.status(200).send('EVENT_RECEIVED');
                     }
 
-                    // Validamos la autenticidad matemática del código
-                    const esCodigoValido = validarCodigoGFinder(text);
-
-                    if (!esCodigoValido) {
-                        await enviarMensajeWhatsApp(from, "❌ *Código inválido o mal tipeado.*\n\nVerificá que tenga 3 letras, 4 números y la letra final de control (Ej: ABC1234X). Si querés volver al inicio, escribí *Cancelar*.");
-                    } else {
-                        // El código pasó el filtro de seguridad, lo guardamos y cerramos el caso
-                        let respuestaFinal = "";
-                        if (usuarioProceso.estado === 'esperando_codigo_registro') {
-                            respuestaFinal = "🎉 ¡Espectacular! Tu llavero ha sido registrado con éxito. Tu información ya está protegida en nuestro sistema.";
-                        } else if (usuarioProceso.estado === 'esperando_codigo_encuentro') {
-                            respuestaFinal = "🤝 ¡Código verificado! Registramos el hallazgo. Si el dueño reporta el extravío, el sistema los conectará de inmediato. ¡Gracias!";
-                        } else if (usuarioProceso.estado === 'esperando_codigo_extravio') {
-                            respuestaFinal = "🚨 Reporte de extravío asentado correctamente. Si alguien encuentra tu llavero y lo reporta, te avisaremos al instante por este medio.";
+                    // --- PASO 1: OPCIÓN 1 (GUARDAR CÓDIGO NUEVO) ---
+                    if (usuarioProceso.estado === 'esperando_codigo_registro') {
+                        if (!validarCodigoGFinder(text)) {
+                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Debe tener 3 letras, 4 números y la letra de control final. Intentá de nuevo o escribí *Cancelar*.");
+                        } else {
+                            await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'completado' }).eq('id', usuarioProceso.id);
+                            await enviarMensajeWhatsApp(from, "🎉 ¡Espectacular! Tu llavero ha sido activado con éxito. Tu información ya está protegida.");
                         }
+                    }
 
-                        // Actualizamos la fila en Supabase con el código real y el estado completado
-                        await supabase
-                            .from('llaveros')
-                            .update({ codigo_llavero: text, estado: 'completado' })
-                            .eq('id', usuarioProceso.id);
+                    // --- PASO 2: OPCIÓN 2 (VALIDAR CÓDIGO ENCONTRADO) ---
+                    else if (usuarioProceso.estado === 'esperando_codigo_encuentro') {
+                        if (!validarCodigoGFinder(text)) {
+                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Intentá de nuevo o escribí *Cancelar*.");
+                        } else {
+                            // Avanzamos al submenú de la opción 2 guardando temporalmente el código validado
+                            await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'esperando_subopcion_encuentro' }).eq('id', usuarioProceso.id);
+                            const subMenuEncuentro = `✅ ¡Código verificado!\n\n¿Qué deseas hacer ahora? Selecciona el número:\n\n*1.* Donde devolverlo\n*2.* Contactar al dueño`;
+                            await enviarMensajeWhatsApp(from, subMenuEncuentro);
+                        }
+                    }
 
-                        await enviarMensajeWhatsApp(from, respuestaFinal);
+                    // --- PASO 2.1: PROCESAR SUBMENÚ DE OPCIÓN 2 ---
+                    else if (usuarioProceso.estado === 'esperando_subopcion_encuentro') {
+                        if (text === '1') {
+                            await supabase.from('llaveros').update({ estado: 'completado' }).eq('id', usuarioProceso.id);
+                            await enviarMensajeWhatsApp(from, "📍 Podés acercar el llavero a cualquiera de nuestras estaciones de servicio AXION oficiales. ¡El personal se encargará del resto! Muchas gracias.");
+                        } else if (text === '2') {
+                            await supabase.from('llaveros').update({ estado: 'completado' }).eq('id', usuarioProceso.id);
+                            await enviarMensajeWhatsApp(from, "📲 Entendido. El sistema procesará la solicitud y notificará internamente para coordinar el contacto de forma segura. ¡Gracias por tu enorme ayuda!");
+                        } else {
+                            await enviarMensajeWhatsApp(from, "⚠️ Opción inválida. Respondé con *1* (Donde devolverlo) o *2* (Contactar al dueño).");
+                        }
+                    }
+
+                    // --- PASO 3: OPCIÓN 9 (PERSONAL - PASO 1: SUCURSAL) ---
+                    else if (usuarioProceso.estado === 'esperando_sucursal_personal') {
+                        const regexSucursal = /^[0-9]{4}$/;
+                        if (!regexSucursal.test(text)) {
+                            await enviarMensajeWhatsApp(from, "❌ El número de sucursal debe ser exactamente de 4 números. Intentá de nuevo:");
+                        } else {
+                            // Guardamos la sucursal provisoriamente en el estado o notas si tuvieras, por ahora cambiamos estado:
+                            await supabase.from('llaveros').update({ estado: `esperando_codigo_personal_suc_${text}` }).eq('id', usuarioProceso.id);
+                            await enviarMensajeWhatsApp(from, `⛽ Sucursal [${text}] registrada.\n\nAhora, ingresá o escaneá el código de 8 caracteres del llavero custodiado:`);
+                        }
+                    }
+
+                    // --- PASO 3.1: OPCIÓN 9 (PERSONAL - PASO 2: CÓDIGO LLAVERO) ---
+                    else if (usuarioProceso.estado.startsWith('esperando_codigo_personal_suc_')) {
+                        const sucursal = usuarioProceso.estado.replace('esperando_codigo_personal_suc_', '');
+                        if (!validarCodigoGFinder(text)) {
+                            await enviarMensajeWhatsApp(from, "❌ Código de llavero inválido. Por favor, revísalo e ingresalo de nuevo:");
+                        } else {
+                            // Completamos el registro del empleado
+                            await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'completado' }).eq('id', usuarioProceso.id);
+                            
+                            // Confirmación al empleado
+                            await enviarMensajeWhatsApp(from, `⚙️ Registro completado para Sucursal ${sucursal}. Sistema procesando alertas.`);
+
+                            // 🚨 NOTIFICACIÓN AL DUEÑO (Simulada / Flujo conceptual de aviso)
+                            // En una fase posterior buscaremos el celular real del dueño asociado a este código en Supabase.
+                            // Por ahora dejamos el aviso listo para desarrollo:
+                            console.log(`🚨 ALERTA: Notificar al dueño del llavero ${text} que está en Sucursal ${sucursal}`);
+                        }
                     }
                 }
             }
@@ -183,5 +215,5 @@ if (value.statuses || messageData.from === process.env.WA_PHONE_NUMBER_ID) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor GFinder Inteligente corriendo en puerto ${PORT}`);
+    console.log(`🚀 Servidor GFinder 2026 corriendo en puerto ${PORT}`);
 });
