@@ -89,6 +89,12 @@ app.post('/webhook', async (req, res) => {
         if (messages && messages[0]) {
             const messageData = messages[0];
             const from = messageData.from; 
+            
+            // Evitar el bucle infinito: Si el mensaje no es de un usuario, ignorarlo
+if (value.statuses || messageData.from === process.env.WA_PHONE_NUMBER_ID) {
+    return res.status(200).send('EVENT_RECEIVED');
+}
+            
 
             if (messageData.type === 'text') {
                 const text = messageData.text.body.trim().toUpperCase();
