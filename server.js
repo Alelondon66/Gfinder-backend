@@ -163,7 +163,7 @@ app.post('/webhook', async (req, res) => {
                         }
                     }
 
-                    // OPCIÓN 9.1: CÓDIGO FINAL DE SUCURSAL -> ALERTA AL DUEÑO
+                   // OPCIÓN 9.1: CÓDIGO FINAL DE SUCURSAL -> ALERTA AL DUEÑO
                     else if (usuarioProceso.estado.startsWith('esperando_codigo_personal_suc_')) {
                         const sucursalId = usuarioProceso.estado.replace('esperando_codigo_personal_suc_', '');
                         
@@ -174,14 +174,15 @@ app.post('/webhook', async (req, res) => {
                             await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'completado' }).eq('id', usuarioProceso.id);
                             await enviarMensajeWhatsApp(from, `⚙️ Registro completado para Sucursal ${sucursalId}. Buscando al dueño...`);
 
-                            // 2. Buscar la dirección de la sucursal en Supabase
-                            const { data: datosSucursal } = await supabase
+                            // 2. CORREGIDO: Buscar la dirección de la sucursal de forma más directa
+                            const { data: filasSucursal } = await supabase
                                 .from('sucursales')
                                 .select('direccion')
-                                .eq('id_sucursal', sucursalId)
-                                .maybeSingle();
+                                .eq('id_sucursal', sucursalId.toString().trim());
 
-                            const direccionEstacion = datosSucursal?.direccion || `Sucursal N° ${sucursalId}`;
+                            const direccionEstacion = (filasSucursal && filasSucursal.length > 0) 
+                                ? filasSucursal[0].direccion 
+                                : `Sucursal N° ${sucursalId}`;
 
                             // 3. Buscar si el dueño real está registrado con ese código de llavero
                             const { data: dueñoLlavero } = await supabase
@@ -194,7 +195,7 @@ app.post('/webhook', async (req, res) => {
                                 .maybeSingle();
 
                             if (dueñoLlavero && dueñoLlavero.telefono_usuario) {
-                                // 4. Generar código aleatorio de retiro (Ej: 4721)
+                                // 4. Generar código aleatorio de retiro
                                 const codigoRetiro = Math.floor(1000 + Math.random() * 9000);
                                 
                                 // 5. Enviar mensaje automático al dueño original
@@ -207,9 +208,6 @@ app.post('/webhook', async (req, res) => {
                             }
                         }
                     }
-                }
-            }
-        }
         return res.status(200).send('EVENT_RECEIVED');
     }
     return res.sendStatus(404);
