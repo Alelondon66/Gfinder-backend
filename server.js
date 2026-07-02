@@ -163,7 +163,7 @@ app.post('/webhook', async (req, res) => {
                         }
                     }
 
-                   // OPCIÓN 9.1: CÓDIGO FINAL DE SUCURSAL -> ALERTA AL DUEÑO
+                    // OPCIÓN 9.1: CÓDIGO FINAL DE SUCURSAL -> ALERTA AL DUEÑO
                     else if (usuarioProceso.estado.startsWith('esperando_codigo_personal_suc_')) {
                         const sucursalId = usuarioProceso.estado.replace('esperando_codigo_personal_suc_', '');
                         
@@ -174,7 +174,7 @@ app.post('/webhook', async (req, res) => {
                             await supabase.from('llaveros').update({ codigo_llavero: text, estado: 'completado' }).eq('id', usuarioProceso.id);
                             await enviarMensajeWhatsApp(from, `⚙️ Registro completado para Sucursal ${sucursalId}. Buscando al dueño...`);
 
-                            // 2. CORREGIDO: Buscar la dirección de la sucursal de forma más directa
+                            // 2. Buscar la dirección de la sucursal de forma directa
                             const { data: filasSucursal } = await supabase
                                 .from('sucursales')
                                 .select('direccion')
@@ -208,6 +208,9 @@ app.post('/webhook', async (req, res) => {
                             }
                         }
                     }
+                }
+            }
+        }
         return res.status(200).send('EVENT_RECEIVED');
     }
     return res.sendStatus(404);
