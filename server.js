@@ -135,8 +135,7 @@ app.post('/webhook', async (req, res) => {
                             .limit(1)
                             .maybeSingle();
 
-                        if (reporteEncuentro && reporteEncuentro.telefono_usuario) {
-                            // Guía breve para el Finder
+                        if (reporteEncuentro && reporteEncucounter.telefono_usuario) {
                             const textoFinal = `💬 *Dueño:* "${mensajeHaciaFinder}"\n_(Responder con: H mensaje)_`;
                             await enviarMensajeWhatsApp(reporteEncuentro.telefono_usuario, textoFinal);
                             return res.status(200).send('EVENT_RECEIVED');
@@ -155,12 +154,13 @@ app.post('/webhook', async (req, res) => {
                 .limit(1)
                 .maybeSingle();
 
+            // ⏱️ REGLA ACTUALIZADA: TIMEOUT DE 5 MINUTOS (300 SEGUNDOS)
             if (usuarioProceso && usuarioProceso.ultima_interaccion) {
                 const ahora = new Date();
                 const ultimaInteraccion = new Date(usuarioProceso.ultima_interaccion);
                 const diferenciaSegundos = Math.floor((ahora - ultimaInteraccion) / 1000);
 
-                if (diferenciaSegundos > 60) {
+                if (diferenciaSegundos > 300) { 
                     await supabase.from('llaveros').delete().eq('id', usuarioProceso.id);
                     usuarioProceso = null; 
                 }
@@ -256,6 +256,7 @@ app.post('/webhook', async (req, res) => {
                         await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ingresá un teléfono alternativo:`);
                     }
                     else if (usuarioProceso.estado === 'esperando_celular_alternativo') {
+                        // AQUÍ CAMBIAMOS EL ESTADO A COMPLETADO DEFINITIVO
                         await supabase.from('llaveros').update({ telefono_alternativo: text, estado: 'completado' }).eq('id', usuarioProceso.id);
                         await enviarMensajeWhatsApp(from, "🎉 ¡Llavero activado con éxito!");
                     }
@@ -297,7 +298,6 @@ app.post('/webhook', async (req, res) => {
 
                         if (dueños && dueños.length > 0) {
                             const dueñoOriginal = dueños[0];
-                            // Guía ultra breve para el Dueño
                             const mensajeAlDueño = `💬 *Finder:* "${text}"\n\n_(Responder con: H mensaje)_\n_(Terminar chat: F)_`;
                             await enviarMensajeWhatsApp(dueñoOriginal.telefono_usuario, mensajeAlDueño);
                         }
@@ -357,5 +357,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor GFinder Compacto corriendo en puerto ${PORT}`);
+    console.log(`🚀 Servidor GFinder Blindado corriendo en puerto ${PORT}`);
 });
