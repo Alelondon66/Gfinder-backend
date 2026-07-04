@@ -9,9 +9,8 @@ app.use(bodyParser.json());
 const WEBHOOK_VERIFY_TOKEN = 'gfinder_axion_token_seguro_2026';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// 🧮 ALGORITMO DEFINTIVO BASE 20 (EXCLUYE I, O, Q, S, Z)
 function validarCodigoGFinder(codigo) {
-    const clean = codigo.toUpperCase().trim();
+    const clean = code = codigo.toUpperCase().trim();
     
     const regexFormato = /^[A-HJKLNPRT-VX-Y]{2}[0-9]{4}[A-HJKLNPRT-VX-Y]{2}$/;
     if (!regexFormato.test(clean)) return false;
@@ -172,7 +171,6 @@ app.post('/webhook', async (req, res) => {
                 .limit(1)
                 .maybeSingle();
 
-            // ⏱️ TIMEOUT DE 5 MINUTOS (300 SEGUNDOS)
             if (usuarioProceso && usuarioProceso.ultima_interaccion) {
                 const ahora = new Date();
                 const ultimaInteraccion = new Date(usuarioProceso.ultima_interaccion);
@@ -255,10 +253,9 @@ app.post('/webhook', async (req, res) => {
                         return res.status(200).send('EVENT_RECEIVED');
                     }
 
-                    // OPCIÓN A: FLUJO DE ALTA CON PANTALLA DE ACEPTACIÓN DE TÉRMINOS
                     if (usuarioProceso.estado === 'esperando_codigo_registro') {
                         if (!validarCodigoGFinder(textUpper)) {
-                            await enviarMensajeWhatsApp(from, "❌ Código inválido o dígito verificador incorrecto. Intentá de nuevo:");
+                            await enviarMensajeWhatsApp(from, "❌ Código inválido. Intentá de nuevo:");
                         } else {
                             const { data: existente } = await supabase.from('llaveros').select('id').eq('codigo_llavero', textUpper).eq('estado', 'completado');
                             if (existente && existente.length > 0) {
@@ -272,13 +269,19 @@ app.post('/webhook', async (req, res) => {
                     }
                     else if (usuarioProceso.estado === 'esperando_nombre_registro') {
                         await supabase.from('llaveros').update({ nombre_usuario: text, estado: 'esperando_celular_alternativo' }).eq('id', usuarioProceso.id);
-                        await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ingresá un teléfono alternativo:`);
+                        await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ingresá otro celular alternativo:`);
                     }
                     else if (usuarioProceso.estado === 'esperando_celular_alternativo') {
-                        await supabase.from('llaveros').update({ telefono_alternativo: text, estado: 'esperando_confirmacion_alta' }).eq('id', usuarioProceso.id);
+                        const cleanNum = text.replace(/\D/g, ''); // Deja solo los números
                         
-                        const mensajeConfirmacion = `📝 *${usuarioProceso.nombre_usuario || 'Usuario'}*, vamos a activar el llavero *${usuarioProceso.codigo_llavero}* y tu tel alternativo es *${text}*.\n\nAquí te dejamos un acceso a las condiciones generales del servicio Vuelve: https://vuelve.com/terminos\n\nSi estás de acuerdo, respondé con el número *1*.\nEn caso contrario marcá *2*`;
-                        await enviarMensajeWhatsApp(from, mensajeConfirmacion);
+                        if (cleanNum.length !== 10) {
+                            await enviarMensajeWhatsApp(from, "❌ El número debe tener exactamente 10 dígitos (ej: 1144554455). Por favor, ingresalo de nuevo:");
+                        } else {
+                            await supabase.from('llaveros').update({ telefono_alternativo: cleanNum, estado: 'esperando_confirmacion_alta' }).eq('id', usuarioProceso.id);
+                            
+                            const mensajeConfirmacion = `📝 *${usuarioProceso.nombre_usuario || 'Usuario'}*, vamos a activar el llavero *${usuarioProceso.codigo_llavero}* y tu tel alternativo es *${cleanNum}*.\n\nAquí te dejamos un acceso a las condiciones generales del servicio Vuelve: https://vuelve.com/terminos\n\nSi estás de acuerdo, respondé con el número *1*.\nEn caso contrario marcá *2*`;
+                            await enviarMensajeWhatsApp(from, mensajeConfirmacion);
+                        }
                     }
                     else if (usuarioProceso.estado === 'esperando_confirmacion_alta') {
                         if (textUpper === '1') {
@@ -292,7 +295,6 @@ app.post('/webhook', async (req, res) => {
                         }
                     }
 
-                    // OPCIÓN E: ENCONTRÉ LLAVERO (ALERTA EN PARALELO AL TELEFONO ALTERNATIVO)
                     else if (usuarioProceso.estado === 'esperando_codigo_encuentro') {
                         if (!validarCodigoGFinder(textUpper)) {
                             await enviarMensajeWhatsApp(from, "❌ Código inválido. Intentá de nuevo:");
@@ -307,11 +309,9 @@ app.post('/webhook', async (req, res) => {
                                 const dueñoLegitimo = activados[0];
                                 const nombrePropietario = dueñoLegitimo.nombre_usuario ? ` *${dueñoLegitimo.nombre_usuario}*` : "";
                                 
-                                // 🔔 1. Mensaje al Dueño Principal
                                 const alertaInmediata = `🚨 *GFinder:* Hola${nombrePropietario}, ingresaron el código de tu llavero *${textUpper}*. Te avisaremos apenas definan la entrega.`;
                                 await enviarMensajeWhatsApp(dueñoLegitimo.telefono_usuario, alertaInmediata);
 
-                                // 🔔 2. Mensaje pasivo al Teléfono Alternativo (Si existe configurado)
                                 if (dueñoLegitimo.telefono_alternativo) {
                                     const alertaAlternativo = `🚨 *Aviso de VUELVE (GFinder):* Hola. Queremos informarte que se ha encontrado el llavero de *${dueñoLegitimo.nombre_usuario || 'un familiar'}*. Nos estamos comunicando con él a su número principal, pero te enviamos este aviso a vos como contacto de seguridad por si perdió también su celular.`;
                                     await enviarMensajeWhatsApp(dueñoLegitimo.telefono_alternativo, alertaAlternativo);
@@ -346,14 +346,12 @@ app.post('/webhook', async (req, res) => {
                         await enviarMensajeWhatsApp(from, "📲 Mensaje enviado. Te avisaremos si el dueño responde.");
                     }
 
-                    // OPCIÓN C: RECLAMOS
                     else if (usuarioProceso.estado === 'esperando_texto_soporte') {
                         await supabase.from('soporte').insert([{ telefono_usuario: from, mensaje: text }]);
                         await supabase.from('llaveros').update({ estado: 'completado' }).eq('id', usuarioProceso.id);
                         await enviarMensajeWhatsApp(from, "✅ Consulta registrada. Nos contactaremos a la brevedad.");
                     }
 
-                    // OPCIÓN 9: SUCURSAL CON ENVÍO EN PARALELO DE DIRECCIÓN Y PIN A AMBOS TELÉFONOS
                     else if (usuarioProceso.estado === 'esperando_sucursal_personal') {
                         const regexSucursal = /^[0-9]{4}$/;
                         if (!regexSucursal.test(textUpper)) {
@@ -367,7 +365,7 @@ app.post('/webhook', async (req, res) => {
                         const sucursalId = usuarioProceso.estado.replace('esperando_codigo_personal_suc_', '');
                         
                         if (!validarCodigoGFinder(textUpper)) {
-                            await enviarMensajeWhatsApp(from, "❌ Código inválido o dígito verificador incorrecto.");
+                            await enviarMensajeWhatsApp(from, "❌ Código inválido.");
                         } else {
                             const { data: dueños } = await supabase.from('llaveros').select('*').eq('codigo_llavero', textUpper).eq('estado', 'completado');
 
@@ -384,11 +382,9 @@ app.post('/webhook', async (req, res) => {
                                 const codigoRetiro = Math.floor(1000 + Math.random() * 9000);
                                 const nombrePropietario = dueñoLlavero.nombre_usuario ? ` *${dueñoLlavero.nombre_usuario}*` : "";
 
-                                // 🚨 Mensaje 1: Al Dueño Principal con Dirección y PIN
                                 const mensajeDueño = `🚨 *GFinder AXION!*\n\nHola${nombrePropietario}, tu llavero *${textUpper}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}`;
                                 await enviarMensajeWhatsApp(dueñoLlavero.telefono_usuario, mensajeDueño);
 
-                                // 🚨 Mensaje 2: Al Teléfono Alternativo (Canal de respaldo pasivo)
                                 if (dueñoLlavero.telefono_alternativo) {
                                     const mensajeAlternativo = `🚨 *Aviso de VUELVE (GFinder):* Hola. El llavero de *${dueñoLlavero.nombre_usuario || 'un familiar'}* fue protegido en una sucursal oficial.\n\n📍 *¿Dónde retirar?:* ${direccionEstacion}\n🔑 *Código de Retiro Secreto:* ${codigoRetiro}\n\nLe avisamos a su celular principal, pero te lo compartimos por seguridad.`;
                                     await enviarMensajeWhatsApp(dueñoLlavero.telefono_alternativo, mensajeAlternativo);
@@ -406,5 +402,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor VUELVE Completo e Inteligente corriendo en puerto ${PORT}`);
+    console.log(`🚀 Servidor VUELVE actualizado corriendo en puerto ${PORT}`);
 });
