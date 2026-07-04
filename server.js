@@ -10,8 +10,7 @@ const WEBHOOK_VERIFY_TOKEN = 'gfinder_axion_token_seguro_2026';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 function validarCodigoGFinder(codigo) {
-    const clean = code = codigo.toUpperCase().trim();
-    
+    const clean = codigo.toUpperCase().trim();
     const regexFormato = /^[A-HJKLNPRT-VX-Y]{2}[0-9]{4}[A-HJKLNPRT-VX-Y]{2}$/;
     if (!regexFormato.test(clean)) return false;
 
@@ -182,14 +181,16 @@ app.post('/webhook', async (req, res) => {
                 }
             }
 
+            // 🗺️ GEOLOCALIZACIÓN CON RESOLUCIÓN EXTENDIDA (MENSAJE O CIERRE)
             if (messageData.type === 'location' && usuarioProceso && usuarioProceso.estado === 'esperando_ubicacion_finder') {
                 const latFinder = messageData.location.latitude;
                 const lonFinder = messageData.location.longitude;
 
                 const { data: sucursales } = await supabase.from('sucursales').select('*');
+                let textoSucursal = "";
 
                 if (!sucursales || sucursales.length === 0) {
-                    await enviarMensajeWhatsApp(from, "📍 Acércalo a cualquier estación AXION.");
+                    textoSucursal = "📍 Acércalo a cualquier estación AXION.";
                 } else {
                     let sucursalMasCercana = null;
                     let distanciaMinima = Infinity;
@@ -205,13 +206,18 @@ app.post('/webhook', async (req, res) => {
                     });
 
                     if (sucursalMasCercana) {
-                        await enviarMensajeWhatsApp(from, `📍 *Estación AXION más cercana:*\n\n🏠 ${sucursalMasCercana.direccion}\n🏁 A aprox. ${distanciaMinima.toFixed(1)} km.`);
+                        textoSucursal = `📍 *Estación AXION más cercana:*\n\n🏠 ${sucursalMasCercana.direccion}\n🏁 A aprox. ${distanciaMinima.toFixed(1)} km.`;
                     } else {
-                        await enviarMensajeWhatsApp(from, `📍 *Estación AXION:*\n\n🏠 ${sucursales[0].direccion}`);
+                        textoSucursal = `📍 *Estación AXION:*\n\n🏠 ${sucursales[0].direccion}`;
                     }
                 }
 
-                await supabase.from('llaveros').update({ estado: 'completado' }).eq('id', usuarioProceso.id);
+                // Modificamos la respuesta para ofrecerle enviar mensaje o terminar
+                const resolucionUbicacion = `${textoSucursal}\n\n💬 _¿Querés dejarle un mensaje seguro al dueño antes de ir?_\n\n*H.* Enviar mensaje\n*F.* Finalizar / Lo estoy llevando`;
+                await enviarMensajeWhatsApp(from, resolucionUbicacion);
+
+                // Pasamos al estado intermedio para permitirle usar las opciones H o F
+                await supabase.from('llaveros').update({ estado: 'esperando_subopcion_encuentro' }).eq('id', usuarioProceso.id);
                 return res.status(200).send('EVENT_RECEIVED');
             }
 
@@ -272,7 +278,7 @@ app.post('/webhook', async (req, res) => {
                         await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ingresá otro celular alternativo:`);
                     }
                     else if (usuarioProceso.estado === 'esperando_celular_alternativo') {
-                        const cleanNum = text.replace(/\D/g, ''); // Deja solo los números
+                        const cleanNum = text.replace(/\D/g, ''); 
                         
                         if (cleanNum.length !== 10) {
                             await enviarMensajeWhatsApp(from, "❌ El número debe tener exactamente 10 dígitos (ej: 1144554455). Por favor, ingresalo de nuevo:");
@@ -329,8 +335,12 @@ app.post('/webhook', async (req, res) => {
                         } else if (textUpper === 'H') {
                             await supabase.from('llaveros').update({ estado: 'esperando_mensaje_anonimo' }).eq('id', usuarioProceso.id);
                             await enviarMensajeWhatsApp(from, "📝 Escribí el mensaje para el dueño:");
+                        } else if (textUpper === 'F') {
+                            // Si presiona F desde la resolución de ubicación, se cierra limpio
+                            await supabase.from('llaveros').update({ estado: 'completado', telefono_finder: from }).eq('id', usuarioProceso.id);
+                            await enviarMensajeWhatsApp(from, "🔒 *Muchas gracias por tu ayuda.* El proceso ha finalizado.");
                         } else {
-                            await enviarMensajeWhatsApp(from, "⚠️ Respondé con *D* o *H*.");
+                            await enviarMensajeWhatsApp(from, "⚠️ Respondé con *D*, *H* o *F*.");
                         }
                     }
                     else if (usuarioProceso.estado === 'esperando_mensaje_anonimo') {
@@ -402,5 +412,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Servidor VUELVE actualizado corriendo en puerto ${PORT}`);
+    console.log(`🚀 Servidor VUELVE optimizado con flujo de ubicación corriendo en puerto ${PORT}`);
 });
