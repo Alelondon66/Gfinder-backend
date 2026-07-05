@@ -411,6 +411,60 @@ app.post('/webhook', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// 📊 ENDPOINT DEL DASHBOARD COMERCIAL (MÉTRICAS GFINDER)
+app.get('/api/dashboard/metrics', async (req, res) => {
+    const apiKey = req.headers['x-api-key'];
+    
+    // Validamos la clave de seguridad en los headers
+    if (!apiKey || apiKey !== 'token_secreto_dashboard_axion_2026') {
+        return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    try {
+        // 1. Traemos las métricas generales de la primera vista
+        const { data: metricasGenerales, error: errGen } = await supabase
+            .from('vista_dashboard_gfinder')
+            .select('*')
+            .maybeSingle();
+
+        if (errGen) throw errGen;
+
+        // 2. Traemos el ranking de sucursales para AXION
+        const { data: rankingSucursales, error: errSuc } = await supabase
+            .from('vista_ranking_sucursales_axion')
+            .select('*');
+
+        if (errSuc) throw errSuc;
+
+        // 3. Calculamos la Tasa de Recuperación
+        const activos = metricasGenerales?.total_llaveros_activos || 0;
+        const encontrados = metricasGenerales?.total_llaveros_encontrados || 0;
+        const tasaRecuperacion = activos > 0 ? ((encontrados / activos) * 100).toFixed(1) : "0.0";
+
+        // Devolvemos la estructura limpia para el Dashboard
+        return res.status(200).json({
+            status: 'success',
+            timestamp: new Date(),
+            termometro_negocio: {
+                total_llaveros_activos: activos,
+                total_llaveros_encontrados: encontrados,
+                tasa_recuperacion_porcentaje: `${tasaRecuperacion}%`
+            },
+            comportamiento_canales: {
+                devoluciones_via_axion_geo: metricasGenerales?.encuadres_por_geolocalizacion || 0,
+                devoluciones_via_chat_directo: encontrados - (metricasGenerales?.encuadres_por_geolocalizacion || 0)
+            },
+            auditoria: {
+                alertas_soporte_pendientes: metricasGenerales?.total_consultas_soporte || 0
+            },
+            reporte_corporativo_axion: rankingSucursales || []
+        });
+
+    } catch (error) {
+        console.error('❌ Error Dashboard:', error.message);
+        return res.status(500).json({ error: 'Error interno del servidor al procesar métricas' });
+    }
+});
 app.listen(PORT, () => {
     console.log(`🚀 Servidor VUELVE optimizado con flujo de ubicación corriendo en puerto ${PORT}`);
 });
