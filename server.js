@@ -24,6 +24,10 @@ if (faltantes.length > 0) {
     process.exit(1);
 }
 
+const WA_TEMPLATE_NOTIFICACION = 'notificacion_llavero_encontrado';
+const WA_TEMPLATE_LANG = 'es_AR';
+const NOTIFICACION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hora
+
 const app = express();
 
 app.use('/webhook', bodyParser.json({
@@ -116,6 +120,10 @@ function validarCodigoGFinder(codigo) {
     return letraVerificadoraReal === letraEsperada;
 }
 
+function validarEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function calcularDistancia(lat1, lon1, lat2, lon2) {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -150,6 +158,99 @@ async function enviarMensajeWhatsApp(telefonoDestino, textoEnviar) {
         console.error('❌ Error Meta:', error.response?.data || error.message);
     }
 }
+
+async function enviarPlantillaWhatsApp(telefonoDestino, codigoLlavero) {
+    const url = `https://graph.facebook.com/v25.0/${process.env.WA_PHONE_NUMBER_ID}/messages`;
+    const payload = {
+        messaging_product: "whatsapp",
+        to: telefonoDestino,
+        type: "template",
+        template: {
+            name: WA_TEMPLATE_NOTIFICACION,
+            language: { code: WA_TEMPLATE_LANG },
+            components: [{
+                type: "body",
+                parameters: [{ type: "text", text: codigoLlavero }]
+            }]
+        }
+    };
+
+    try {
+        await axiosWhatsApp.post(url, payload, {
+            headers: {
+                'Authorization': `Bearer ${process.env.WA_ACCESS_TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log(`📤 Plantilla enviada a [${telefonoDestino}]`);
+    } catch (error) {
+        console.error('❌ Error Meta (plantilla):', error.response?.data || error.message);
+    }
+}
+
+// Manda la plantilla aprobada (abre la ventana de 24hs) y deja guardado el detalle
+// que se le va a revelar al dueño en texto libre recién cuando responda.
+async function registrarNotificacionPendiente(llaveroId, telefonoDueño, codigoLlavero, detalleTexto) {
+    await enviarPlantillaWhatsApp(telefonoDueño, codigoLlavero);
+    await dbWrite(supabase.from('llaveros').update({
+        notificacion_pendiente: detalleTexto,
+        notificacion_enviada_at: new Date()
+    }).eq('id', llaveroId), 'update llaveros (notificacion pendiente)');
+}
+
+async function enviarEmailAlternativo(destinatario, asunto, cuerpo) {
+    if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
+        console.log(`✉️  Email pendiente (Resend no configurado todavía) para ${destinatario}: ${asunto}`);
+        return false;
+    }
+    try {
+        await axios.post('https://api.resend.com/emails', {
+            from: process.env.RESEND_FROM_EMAIL,
+            to: destinatario,
+            subject: asunto,
+            text: cuerpo
+        }, {
+            headers: {
+                'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 8000
+        });
+        console.log(`✉️  Email enviado a [${destinatario}]`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error Resend:', error.response?.data || error.message);
+        return false;
+    }
+}
+
+// Corre cada 10 min: si pasó más de 1 hora sin que el dueño responda a la
+// plantilla de WhatsApp, le avisamos al contacto alternativo por email.
+async function revisarNotificacionesVencidas() {
+    const limite = new Date(Date.now() - NOTIFICACION_TIMEOUT_MS).toISOString();
+    const vencidas = await dbRead(supabase
+        .from('llaveros')
+        .select('id, email_alternativo, notificacion_pendiente, nombre_usuario')
+        .not('notificacion_pendiente', 'is', null)
+        .not('email_alternativo', 'is', null)
+        .lt('notificacion_enviada_at', limite), 'select llaveros (notificaciones vencidas)');
+
+    if (!vencidas || vencidas.length === 0) return;
+
+    for (const fila of vencidas) {
+        const asunto = 'VUELVE - Novedades sobre un llavero registrado';
+        const cuerpo = `Hola,\n\nNo pudimos contactar por WhatsApp a ${fila.nombre_usuario || 'quien registró este llavero'} para avisarle lo siguiente:\n\n${fila.notificacion_pendiente}\n\nTe llega este correo como contacto alternativo registrado en VUELVE, por si podés ayudar a contactarlo/a.\n\n— Equipo VUELVE`;
+
+        const enviado = await enviarEmailAlternativo(fila.email_alternativo, asunto, cuerpo);
+        if (enviado) {
+            await dbWrite(supabase.from('llaveros').update({ notificacion_pendiente: null, notificacion_enviada_at: null }).eq('id', fila.id), 'update llaveros (notificacion escalada a email)');
+        }
+    }
+}
+
+setInterval(() => {
+    revisarNotificacionesVencidas().catch(err => console.error('❌ Error revisando notificaciones vencidas:', err.message));
+}, 10 * 60 * 1000);
 
 app.get('/webhook', limitadorWebhook, (req, res) => {
     const mode = req.query['hub.mode'];
@@ -186,6 +287,25 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
             if (messageData.type === 'text') {
                 const textoPlano = messageData.text.body.trim();
                 const textoUpper = textoPlano.toUpperCase();
+
+                // Si el que escribe tiene una notificación esperando ser "destrabada"
+                // (respondió a la plantilla de WhatsApp), le mandamos el detalle real
+                // como texto libre, ya dentro de la ventana de sesión recién abierta.
+                const notificacionPendiente = await dbRead(supabase
+                    .from('llaveros')
+                    .select('id, notificacion_pendiente')
+                    .eq('telefono_usuario', from)
+                    .eq('estado', 'completado')
+                    .not('notificacion_pendiente', 'is', null)
+                    .order('notificacion_enviada_at', { ascending: false })
+                    .limit(1)
+                    .maybeSingle(), 'select llaveros (notificacion pendiente)');
+
+                if (notificacionPendiente) {
+                    await dbWrite(supabase.from('llaveros').update({ notificacion_pendiente: null, notificacion_enviada_at: null }).eq('id', notificacionPendiente.id), 'update llaveros (limpiar notificacion pendiente)');
+                    await enviarMensajeWhatsApp(from, notificacionPendiente.notificacion_pendiente);
+                    return res.status(200).send('EVENT_RECEIVED');
+                }
 
                 if (textoUpper === 'F') {
                     const llaveroDueño = await dbRead(supabase
@@ -363,18 +483,18 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                         }
                     }
                     else if (usuarioProceso.estado === 'esperando_nombre_registro') {
-                        await dbWrite(supabase.from('llaveros').update({ nombre_usuario: text, estado: 'esperando_celular_alternativo' }).eq('id', usuarioProceso.id), 'update llaveros (nombre)');
-                        await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ingresá otro celular alternativo:`);
+                        await dbWrite(supabase.from('llaveros').update({ nombre_usuario: text, estado: 'esperando_email_alternativo' }).eq('id', usuarioProceso.id), 'update llaveros (nombre)');
+                        await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ingresá un email de contacto alternativo (por si no podemos comunicarnos con vos por WhatsApp):`);
                     }
-                    else if (usuarioProceso.estado === 'esperando_celular_alternativo') {
-                        const cleanNum = text.replace(/\D/g, '');
+                    else if (usuarioProceso.estado === 'esperando_email_alternativo') {
+                        const emailLimpio = text.trim();
 
-                        if (cleanNum.length !== 10) {
-                            await enviarMensajeWhatsApp(from, "❌ El número debe tener exactamente 10 dígitos (ej: 1144554455). Por favor, ingresalo de nuevo:");
+                        if (!validarEmail(emailLimpio)) {
+                            await enviarMensajeWhatsApp(from, "❌ Ingresá un email válido (ej: nombre@dominio.com):");
                         } else {
-                            await dbWrite(supabase.from('llaveros').update({ telefono_alternativo: cleanNum, estado: 'esperando_confirmacion_alta' }).eq('id', usuarioProceso.id), 'update llaveros (celular alternativo)');
+                            await dbWrite(supabase.from('llaveros').update({ email_alternativo: emailLimpio, estado: 'esperando_confirmacion_alta' }).eq('id', usuarioProceso.id), 'update llaveros (email alternativo)');
 
-                            const mensajeConfirmacion = `📝 *${usuarioProceso.nombre_usuario || 'Usuario'}*, vamos a activar el llavero *${usuarioProceso.codigo_llavero}* y tu tel alternativo es *${cleanNum}*.\n\nAquí te dejamos un acceso a las condiciones generales del servicio Vuelve: https://vuelve.com/terminos\n\nSi estás de acuerdo, respondé con el número *1*.\nEn caso contrario marcá *2*`;
+                            const mensajeConfirmacion = `📝 *${usuarioProceso.nombre_usuario || 'Usuario'}*, vamos a activar el llavero *${usuarioProceso.codigo_llavero}* y tu email alternativo es *${emailLimpio}*.\n\nAquí te dejamos un acceso a las condiciones generales del servicio Vuelve: https://vuelve.com/terminos\n\nSi estás de acuerdo, respondé con el número *1*.\nEn caso contrario marcá *2*`;
                             await enviarMensajeWhatsApp(from, mensajeConfirmacion);
                         }
                     }
@@ -405,13 +525,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                                 const nombrePropietario = dueñoLegitimo.nombre_usuario ? ` *${dueñoLegitimo.nombre_usuario}*` : "";
 
                                 const alertaInmediata = `🚨 *GFinder:* Hola${nombrePropietario}, ingresaron el código de tu llavero *${textUpper}*. Te avisaremos apenas definan la entrega.`;
-                                const avisosDueño = [enviarMensajeWhatsApp(dueñoLegitimo.telefono_usuario, alertaInmediata)];
-
-                                if (dueñoLegitimo.telefono_alternativo) {
-                                    const alertaAlternativo = `🚨 *Aviso de VUELVE (GFinder):* Hola. Queremos informarte que se ha encontrado el llavero de *${dueñoLegitimo.nombre_usuario || 'un familiar'}*. Nos estamos comunicando con él a su número principal, pero te enviamos este aviso a vos como contacto de seguridad por si perdió también su celular.`;
-                                    avisosDueño.push(enviarMensajeWhatsApp(dueñoLegitimo.telefono_alternativo, alertaAlternativo));
-                                }
-                                await Promise.all(avisosDueño);
+                                await registrarNotificacionPendiente(dueñoLegitimo.id, dueñoLegitimo.telefono_usuario, textUpper, alertaInmediata);
 
                                 const subMenuEncuentro = `✅ ¡Llavero localizado!\n\nSeleccioná:\n*D.* Ver dónde devolverlo\n*H.* Hablar seguro con el dueño`;
                                 await enviarMensajeWhatsApp(from, subMenuEncuentro);
@@ -439,7 +553,14 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                         if (dueños && dueños.length > 0) {
                             const dueñoOriginal = dueños[0];
                             const mensajeAlDueño = `💬 *Finder:* "${text}"\n\n_(Responder con: H mensaje)_\n_(Terminar chat: F)_`;
-                            await enviarMensajeWhatsApp(dueñoOriginal.telefono_usuario, mensajeAlDueño);
+
+                            if (dueñoOriginal.notificacion_pendiente) {
+                                // El dueño todavía no respondió a la plantilla (sesión no abierta):
+                                // guardamos el mensaje para revelárselo recién cuando responda.
+                                await dbWrite(supabase.from('llaveros').update({ notificacion_pendiente: mensajeAlDueño }).eq('id', dueñoOriginal.id), 'update llaveros (notificacion pendiente con mensaje finder)');
+                            } else {
+                                await enviarMensajeWhatsApp(dueñoOriginal.telefono_usuario, mensajeAlDueño);
+                            }
                         }
 
                         await dbWrite(supabase.from('llaveros').update({ estado: 'completado', telefono_finder: from }).eq('id', usuarioProceso.id), 'update llaveros (mensaje anonimo completado)');
@@ -483,13 +604,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                                 const nombrePropietario = dueñoLlavero.nombre_usuario ? ` *${dueñoLlavero.nombre_usuario}*` : "";
 
                                 const mensajeDueño = `🚨 *GFinder AXION!*\n\nHola${nombrePropietario}, tu llavero *${textUpper}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}`;
-                                const avisosDueño = [enviarMensajeWhatsApp(dueñoLlavero.telefono_usuario, mensajeDueño)];
-
-                                if (dueñoLlavero.telefono_alternativo) {
-                                    const mensajeAlternativo = `🚨 *Aviso de VUELVE (GFinder):* Hola. El llavero de *${dueñoLlavero.nombre_usuario || 'un familiar'}* fue protegido en una sucursal oficial.\n\n📍 *¿Dónde retirar?:* ${direccionEstacion}\n🔑 *Código de Retiro Secreto:* ${codigoRetiro}\n\nLe avisamos a su celular principal, pero te lo compartimos por seguridad.`;
-                                    avisosDueño.push(enviarMensajeWhatsApp(dueñoLlavero.telefono_alternativo, mensajeAlternativo));
-                                }
-                                await Promise.all(avisosDueño);
+                                await registrarNotificacionPendiente(dueñoLlavero.id, dueñoLlavero.telefono_usuario, textUpper, mensajeDueño);
                             }
                         }
                     }
