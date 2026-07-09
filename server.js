@@ -747,74 +747,182 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
 });
 
 const PORT = process.env.PORT || 3000;
-// 📊 ENDPOINT DEL DASHBOARD COMERCIAL (MÉTRICAS GFINDER)
+
+async function obtenerMetricasDashboard() {
+    // 1. Traemos las métricas generales de la primera vista
+    const { data: metricasGenerales, error: errGen } = await supabase
+        .from('vista_dashboard_gfinder')
+        .select('*')
+        .maybeSingle();
+
+    if (errGen) throw errGen;
+
+    // 2. Traemos el ranking de sucursales para AXION
+    const { data: rankingSucursales, error: errSuc } = await supabase
+        .from('vista_ranking_sucursales_axion')
+        .select('*');
+
+    if (errSuc) throw errSuc;
+
+    // 2.b Estado de llaveros por rol (activados / en sucursal / retirados)
+    const [{ count: activados, error: errActivados }, { count: enSucursal, error: errEnSucursal }, { count: retirados, error: errRetirados }] = await Promise.all([
+        supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'dueño'),
+        supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'axion_custodia'),
+        supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'retirado')
+    ]);
+
+    if (errActivados || errEnSucursal || errRetirados) throw (errActivados || errEnSucursal || errRetirados);
+
+    // 3. Calculamos la Tasa de Recuperación
+    const activos = metricasGenerales?.total_llaveros_activos || 0;
+    const encontrados = metricasGenerales?.total_llaveros_encontrados || 0;
+    const tasaRecuperacion = activos > 0 ? ((encontrados / activos) * 100).toFixed(1) : "0.0";
+
+    return {
+        status: 'success',
+        timestamp: new Date(),
+        termometro_negocio: {
+            total_llaveros_activos: activos,
+            total_llaveros_encontrados: encontrados,
+            tasa_recuperacion_porcentaje: `${tasaRecuperacion}%`
+        },
+        comportamiento_canales: {
+            devoluciones_via_axion_geo: metricasGenerales?.encuadres_por_geolocalizacion || 0,
+            devoluciones_via_chat_directo: encontrados - (metricasGenerales?.encuadres_por_geolocalizacion || 0)
+        },
+        auditoria: {
+            alertas_soporte_pendientes: metricasGenerales?.total_consultas_soporte || 0
+        },
+        estado_llaveros: {
+            activados: activados || 0,
+            esperando_en_sucursal: enSucursal || 0,
+            retirados: retirados || 0
+        },
+        reporte_corporativo_axion: rankingSucursales || []
+    };
+}
+
+function escaparHtml(texto) {
+    return String(texto).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderizarPaginaDashboard(m) {
+    const filasSucursales = (m.reporte_corporativo_axion || []).map(s => `
+        <tr>
+            <td>${escaparHtml(s.nombre_sucursal || s.id_sucursal || '-')}</td>
+            <td>${escaparHtml(s.total_entregas ?? s.cantidad ?? '-')}</td>
+        </tr>
+    `).join('') || '<tr><td colspan="2">Sin datos todavía</td></tr>';
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VUELVE - Estado de llaveros</title>
+<style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f4f2; color: #222; margin: 0; padding: 24px; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    .sub { color: #666; font-size: 13px; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 32px; }
+    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .card .valor { font-size: 32px; font-weight: 700; }
+    .card .etiqueta { font-size: 13px; color: #666; margin-top: 4px; }
+    .card.activados .valor { color: #1d9e75; }
+    .card.sucursal .valor { color: #ba7517; }
+    .card.retirados .valor { color: #185fa5; }
+    .card.soporte .valor { color: #d85a30; }
+    h2 { font-size: 16px; margin: 24px 0 12px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    th, td { text-align: left; padding: 10px 14px; font-size: 14px; border-bottom: 1px solid #eee; }
+    th { background: #fafafa; color: #666; font-weight: 600; }
+    .refrescar { font-size: 13px; color: #888; margin-top: 24px; }
+</style>
+</head>
+<body>
+    <h1>VUELVE — Estado de llaveros</h1>
+    <div class="sub">Actualizado: ${new Date(m.timestamp).toLocaleString('es-AR')}</div>
+
+    <div class="grid">
+        <div class="card activados">
+            <div class="valor">${m.estado_llaveros.activados}</div>
+            <div class="etiqueta">Llaveros activados</div>
+        </div>
+        <div class="card sucursal">
+            <div class="valor">${m.estado_llaveros.esperando_en_sucursal}</div>
+            <div class="etiqueta">Esperando en sucursal</div>
+        </div>
+        <div class="card retirados">
+            <div class="valor">${m.estado_llaveros.retirados}</div>
+            <div class="etiqueta">Retirados de sucursal</div>
+        </div>
+        <div class="card soporte">
+            <div class="valor">${m.auditoria.alertas_soporte_pendientes}</div>
+            <div class="etiqueta">Consultas de soporte</div>
+        </div>
+    </div>
+
+    <h2>Tasa de recuperación general</h2>
+    <div class="grid">
+        <div class="card">
+            <div class="valor">${m.termometro_negocio.tasa_recuperacion_porcentaje}</div>
+            <div class="etiqueta">${m.termometro_negocio.total_llaveros_encontrados} encontrados de ${m.termometro_negocio.total_llaveros_activos} activos</div>
+        </div>
+        <div class="card">
+            <div class="valor">${m.comportamiento_canales.devoluciones_via_axion_geo}</div>
+            <div class="etiqueta">Devoluciones vía sucursal AXION</div>
+        </div>
+        <div class="card">
+            <div class="valor">${m.comportamiento_canales.devoluciones_via_chat_directo}</div>
+            <div class="etiqueta">Devoluciones por chat directo</div>
+        </div>
+    </div>
+
+    <h2>Ranking de sucursales</h2>
+    <table>
+        <thead><tr><th>Sucursal</th><th>Entregas</th></tr></thead>
+        <tbody>${filasSucursales}</tbody>
+    </table>
+
+    <div class="refrescar">Esta página no se actualiza sola — recargala para ver datos nuevos.</div>
+</body>
+</html>`;
+}
+
+// 📊 ENDPOINT DEL DASHBOARD COMERCIAL (MÉTRICAS GFINDER, formato JSON para integraciones)
 app.get('/api/dashboard/metrics', limitadorDashboard, async (req, res) => {
     const apiKey = req.headers['x-api-key'];
 
-    // Validamos la clave de seguridad en los headers
     if (!apiKey || !compararSeguro(apiKey, process.env.DASHBOARD_API_KEY)) {
         return res.status(401).json({ error: 'No autorizado' });
     }
 
     try {
-        // 1. Traemos las métricas generales de la primera vista
-        const { data: metricasGenerales, error: errGen } = await supabase
-            .from('vista_dashboard_gfinder')
-            .select('*')
-            .maybeSingle();
-
-        if (errGen) throw errGen;
-
-        // 2. Traemos el ranking de sucursales para AXION
-        const { data: rankingSucursales, error: errSuc } = await supabase
-            .from('vista_ranking_sucursales_axion')
-            .select('*');
-
-        if (errSuc) throw errSuc;
-
-        // 2.b Estado de llaveros por rol (activados / en sucursal / retirados)
-        const [{ count: activados, error: errActivados }, { count: enSucursal, error: errEnSucursal }, { count: retirados, error: errRetirados }] = await Promise.all([
-            supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'dueño'),
-            supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'axion_custodia'),
-            supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'retirado')
-        ]);
-
-        if (errActivados || errEnSucursal || errRetirados) throw (errActivados || errEnSucursal || errRetirados);
-
-        // 3. Calculamos la Tasa de Recuperación
-        const activos = metricasGenerales?.total_llaveros_activos || 0;
-        const encontrados = metricasGenerales?.total_llaveros_encontrados || 0;
-        const tasaRecuperacion = activos > 0 ? ((encontrados / activos) * 100).toFixed(1) : "0.0";
-
-        // Devolvemos la estructura limpia para el Dashboard
-        return res.status(200).json({
-            status: 'success',
-            timestamp: new Date(),
-            termometro_negocio: {
-                total_llaveros_activos: activos,
-                total_llaveros_encontrados: encontrados,
-                tasa_recuperacion_porcentaje: `${tasaRecuperacion}%`
-            },
-            comportamiento_canales: {
-                devoluciones_via_axion_geo: metricasGenerales?.encuadres_por_geolocalizacion || 0,
-                devoluciones_via_chat_directo: encontrados - (metricasGenerales?.encuadres_por_geolocalizacion || 0)
-            },
-            auditoria: {
-                alertas_soporte_pendientes: metricasGenerales?.total_consultas_soporte || 0
-            },
-            estado_llaveros: {
-                activados: activados || 0,
-                esperando_en_sucursal: enSucursal || 0,
-                retirados: retirados || 0
-            },
-            reporte_corporativo_axion: rankingSucursales || []
-        });
-
+        const metricas = await obtenerMetricasDashboard();
+        return res.status(200).json(metricas);
     } catch (error) {
         console.error('❌ Error Dashboard:', error.message);
         return res.status(500).json({ error: 'Error interno del servidor al procesar métricas' });
     }
 });
+
+// 📊 PÁGINA VISUAL DEL DASHBOARD (para ver desde el navegador, sin herramientas técnicas)
+app.get('/dashboard', limitadorDashboard, async (req, res) => {
+    const clave = req.query.key;
+
+    if (!clave || !compararSeguro(clave, process.env.DASHBOARD_API_KEY)) {
+        return res.status(401).send('Acceso no autorizado. Agregá ?key=TU_CLAVE al final de la dirección.');
+    }
+
+    try {
+        const metricas = await obtenerMetricasDashboard();
+        return res.status(200).send(renderizarPaginaDashboard(metricas));
+    } catch (error) {
+        console.error('❌ Error página Dashboard:', error.message);
+        return res.status(500).send('Error interno al cargar el dashboard.');
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`🚀 Servidor VUELVE optimizado con flujo de ubicación corriendo en puerto ${PORT}`);
 });
