@@ -4,7 +4,8 @@
   "description": "Backend MVP para GFinder AXION con WhatsApp, Axios y Supabase",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
