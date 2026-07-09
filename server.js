@@ -27,6 +27,7 @@ if (faltantes.length > 0) {
 const WA_TEMPLATE_NOTIFICACION = 'notificacion_llavero_encontrado';
 const WA_TEMPLATE_LANG = 'es_AR';
 const NOTIFICACION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hora
+const EMAIL_ADMINISTRACION = 'contacto@vuelve.ar';
 
 const app = express();
 
@@ -252,6 +253,41 @@ setInterval(() => {
     revisarNotificacionesVencidas().catch(err => console.error('❌ Error revisando notificaciones vencidas:', err.message));
 }, 10 * 60 * 1000);
 
+const DIA_RESUMEN_SEMANAL = 1; // 0=domingo, 1=lunes, ...
+
+// Corre una vez al día; los lunes junta todas las activaciones canceladas/
+// abandonadas de la semana, manda un resumen por email y las purga de la base.
+// Es idempotente: si corre más de una vez el mismo lunes, la segunda vez no
+// encuentra filas 'cancelado' pendientes y no hace nada.
+async function enviarResumenYPurgarCancelados() {
+    if (new Date().getDay() !== DIA_RESUMEN_SEMANAL) return;
+
+    const cancelados = await dbRead(supabase
+        .from('llaveros')
+        .select('id, codigo_llavero, telefono_usuario, nombre_usuario, motivo_cancelacion, cancelado_en')
+        .eq('estado', 'cancelado')
+        .order('cancelado_en', { ascending: true }), 'select llaveros (resumen cancelados)');
+
+    if (!cancelados || cancelados.length === 0) return;
+
+    const filas = cancelados.map(c =>
+        `- ${c.codigo_llavero || '(sin código)'} | ${c.telefono_usuario} | ${c.nombre_usuario || '-'} | motivo: ${c.motivo_cancelacion || 'desconocido'} | ${c.cancelado_en ? new Date(c.cancelado_en).toLocaleString('es-AR') : '-'}`
+    ).join('\n');
+
+    const cuerpo = `Resumen semanal de activaciones canceladas o abandonadas (${cancelados.length} registros):\n\n${filas}\n\nEstos registros se eliminan de la base luego de este envío.`;
+
+    const enviado = await enviarEmailAlternativo(EMAIL_ADMINISTRACION, `VUELVE - Resumen semanal de cancelaciones (${cancelados.length})`, cuerpo);
+
+    if (enviado) {
+        const ids = cancelados.map(c => c.id);
+        await dbWrite(supabase.from('llaveros').delete().in('id', ids), 'delete llaveros (purga cancelados post-resumen)');
+    }
+}
+
+setInterval(() => {
+    enviarResumenYPurgarCancelados().catch(err => console.error('❌ Error en resumen semanal de cancelados:', err.message));
+}, 24 * 60 * 60 * 1000);
+
 app.get('/webhook', limitadorWebhook, (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -323,7 +359,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                             .select('id, telefono_usuario')
                             .eq('codigo_llavero', llaveroDueño.codigo_llavero)
                             .eq('estado', 'completado')
-                            .not('telefono_usuario', 'eq', from)
+                            .eq('rol', 'finder')
                             .order('fecha_registro', { ascending: false })
                             .limit(1)
                             .maybeSingle(), 'select llaveros (F encuentro)');
@@ -355,7 +391,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                             .select('telefono_usuario')
                             .eq('codigo_llavero', llaveroDueño.codigo_llavero)
                             .eq('estado', 'completado')
-                            .not('telefono_usuario', 'eq', from)
+                            .eq('rol', 'finder')
                             .order('fecha_registro', { ascending: false })
                             .limit(1)
                             .maybeSingle(), 'select llaveros (H encuentro)');
@@ -375,6 +411,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                 .select('*')
                 .eq('telefono_usuario', from)
                 .neq('estado', 'completado')
+                .neq('estado', 'cancelado')
                 .order('fecha_registro', { ascending: false })
                 .limit(1)
                 .maybeSingle(), 'select llaveros (proceso activo)');
@@ -385,7 +422,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                 const diferenciaSegundos = Math.floor((ahora - ultimaInteraccion) / 1000);
 
                 if (diferenciaSegundos > 300) {
-                    await dbWrite(supabase.from('llaveros').delete().eq('id', usuarioProceso.id), 'delete llaveros (timeout)');
+                    await dbWrite(supabase.from('llaveros').update({ estado: 'cancelado', cancelado_en: new Date(), motivo_cancelacion: 'timeout_5min' }).eq('id', usuarioProceso.id), 'update llaveros (timeout -> cancelado)');
                     usuarioProceso = null;
                 }
             }
@@ -436,7 +473,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
 
                 if (!usuarioProceso) {
                     if (textUpper === 'HOLA' || textUpper === 'MENU' || textUpper === 'INICIO' || textUpper === 'CANCELAR') {
-                        const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nRespondé con la letra:\n\n*A.* Activar nuevo llavero\n*E.* Encontré un llavero\n*C.* Consultas o Reclamos`;
+                        const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nRespondé con la letra:\n\n*A.* Activar nuevo llavero\n*E.* Encontré un llavero\n*R.* Recuperar mi llavero en sucursal\n*C.* Consultas o Reclamos`;
                         await enviarMensajeWhatsApp(from, menuTexto);
                     }
                     else if (textUpper === 'A') {
@@ -446,6 +483,24 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                     else if (textUpper === 'E') {
                         await dbWrite(supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_codigo_encuentro', fecha_registro: new Date(), ultima_interaccion: new Date() }]), 'insert llaveros (E)');
                         await enviarMensajeWhatsApp(from, "🔍 Ingresá el código de 8 caracteres del llavero encontrado:");
+                    }
+                    else if (textUpper === 'R') {
+                        const llaveroDueño = await dbRead(supabase
+                            .from('llaveros')
+                            .select('codigo_llavero')
+                            .eq('telefono_usuario', from)
+                            .eq('estado', 'completado')
+                            .eq('rol', 'dueño')
+                            .order('fecha_registro', { ascending: false })
+                            .limit(1)
+                            .maybeSingle(), 'select llaveros (R propio)');
+
+                        if (!llaveroDueño) {
+                            await enviarMensajeWhatsApp(from, "⚠️ No encontramos ningún llavero activo a tu nombre.");
+                        } else {
+                            await dbWrite(supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_codigo_retiro', codigo_llavero: llaveroDueño.codigo_llavero, fecha_registro: new Date(), ultima_interaccion: new Date() }]), 'insert llaveros (R)');
+                            await enviarMensajeWhatsApp(from, "🔑 Ingresá el código de autorización que recibiste (lo tenés más arriba en este chat):");
+                        }
                     }
                     else if (textUpper === 'C') {
                         await dbWrite(supabase.from('llaveros').insert([{ telefono_usuario: from, estado: 'esperando_texto_soporte', fecha_registro: new Date(), ultima_interaccion: new Date() }]), 'insert llaveros (C)');
@@ -463,7 +518,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                     await dbWrite(supabase.from('llaveros').update({ ultima_interaccion: new Date() }).eq('id', usuarioProceso.id), 'update llaveros (ultima_interaccion)');
 
                     if (textUpper === 'CANCELAR' || textUpper === 'MENU') {
-                        await dbWrite(supabase.from('llaveros').delete().eq('id', usuarioProceso.id), 'delete llaveros (cancelar)');
+                        await dbWrite(supabase.from('llaveros').update({ estado: 'cancelado', cancelado_en: new Date(), motivo_cancelacion: 'usuario_cancelo' }).eq('id', usuarioProceso.id), 'update llaveros (cancelar -> cancelado)');
                         await enviarMensajeWhatsApp(from, "🔄 Cancelado. Escribí *Hola* para reiniciar.");
                         return res.status(200).send('EVENT_RECEIVED');
                     }
@@ -475,7 +530,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                             const existente = await dbRead(supabase.from('llaveros').select('id').eq('codigo_llavero', textUpper).eq('estado', 'completado'), 'select llaveros (codigo existente)');
                             if (existente && existente.length > 0) {
                                 await enviarMensajeWhatsApp(from, "⚠️ Código ya activado. Seleccioná la Opción C.");
-                                await dbWrite(supabase.from('llaveros').delete().eq('id', usuarioProceso.id), 'delete llaveros (codigo ya activado)');
+                                await dbWrite(supabase.from('llaveros').update({ estado: 'cancelado', cancelado_en: new Date(), motivo_cancelacion: 'codigo_ya_activado' }).eq('id', usuarioProceso.id), 'update llaveros (codigo ya activado -> cancelado)');
                             } else {
                                 await dbWrite(supabase.from('llaveros').update({ codigo_llavero: textUpper, estado: 'esperando_nombre_registro' }).eq('id', usuarioProceso.id), 'update llaveros (codigo verificado)');
                                 await enviarMensajeWhatsApp(from, "👤 Código verificado. ¿Cómo es tu nombre?");
@@ -500,10 +555,10 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                     }
                     else if (usuarioProceso.estado === 'esperando_confirmacion_alta') {
                         if (textUpper === '1') {
-                            await dbWrite(supabase.from('llaveros').update({ estado: 'completado' }).eq('id', usuarioProceso.id), 'update llaveros (confirmacion alta)');
+                            await dbWrite(supabase.from('llaveros').update({ estado: 'completado', rol: 'dueño' }).eq('id', usuarioProceso.id), 'update llaveros (confirmacion alta)');
                             await enviarMensajeWhatsApp(from, "🎉 ¡Llavero activado con éxito!");
                         } else if (textUpper === '2') {
-                            await dbWrite(supabase.from('llaveros').delete().eq('id', usuarioProceso.id), 'delete llaveros (confirmacion cancelada)');
+                            await dbWrite(supabase.from('llaveros').update({ estado: 'cancelado', cancelado_en: new Date(), motivo_cancelacion: 'usuario_rechazo_confirmacion' }).eq('id', usuarioProceso.id), 'update llaveros (confirmacion cancelada -> cancelado)');
                             await enviarMensajeWhatsApp(from, "🔄 Registro cancelado correctamente. Escribí *Hola* si querés volver a empezar.");
                         } else {
                             await enviarMensajeWhatsApp(from, "⚠️ Opción inválida. Por favor, respondé con *1* para Confirmar o *2* para Cancelar.");
@@ -514,7 +569,7 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                         if (!validarCodigoGFinder(textUpper)) {
                             await enviarMensajeWhatsApp(from, "❌ Código inválido. Intentá de nuevo:");
                         } else {
-                            const activados = await dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', textUpper).eq('estado', 'completado'), 'select llaveros (codigo encuentro)');
+                            const activados = await dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', textUpper).eq('estado', 'completado').eq('rol', 'dueño'), 'select llaveros (codigo encuentro)');
 
                             if (!activados || activados.length === 0) {
                                 await enviarMensajeWhatsApp(from, "⚠️ El código no corresponde a un llavero activo.");
@@ -541,14 +596,14 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                             await enviarMensajeWhatsApp(from, "📝 Escribí el mensaje para el dueño:");
                         } else if (textUpper === 'F') {
                             // Si presiona F desde la resolución de ubicación, se cierra limpio
-                            await dbWrite(supabase.from('llaveros').update({ estado: 'completado', telefono_finder: from }).eq('id', usuarioProceso.id), 'update llaveros (subopcion F)');
+                            await dbWrite(supabase.from('llaveros').update({ estado: 'completado', rol: 'finder', telefono_finder: from }).eq('id', usuarioProceso.id), 'update llaveros (subopcion F)');
                             await enviarMensajeWhatsApp(from, "🔒 *Muchas gracias por tu ayuda.* El proceso ha finalizado.");
                         } else {
                             await enviarMensajeWhatsApp(from, "⚠️ Respondé con *D*, *H* o *F*.");
                         }
                     }
                     else if (usuarioProceso.estado === 'esperando_mensaje_anonimo') {
-                        const dueños = await dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', usuarioProceso.codigo_llavero).eq('estado', 'completado'), 'select llaveros (mensaje anonimo)');
+                        const dueños = await dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', usuarioProceso.codigo_llavero).eq('estado', 'completado').eq('rol', 'dueño'), 'select llaveros (mensaje anonimo)');
 
                         if (dueños && dueños.length > 0) {
                             const dueñoOriginal = dueños[0];
@@ -563,14 +618,87 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                             }
                         }
 
-                        await dbWrite(supabase.from('llaveros').update({ estado: 'completado', telefono_finder: from }).eq('id', usuarioProceso.id), 'update llaveros (mensaje anonimo completado)');
+                        await dbWrite(supabase.from('llaveros').update({ estado: 'completado', rol: 'finder', telefono_finder: from }).eq('id', usuarioProceso.id), 'update llaveros (mensaje anonimo completado)');
                         await enviarMensajeWhatsApp(from, "📲 Mensaje enviado. Te avisaremos si el dueño responde.");
                     }
 
                     else if (usuarioProceso.estado === 'esperando_texto_soporte') {
                         await dbWrite(supabase.from('soporte').insert([{ telefono_usuario: from, mensaje: text }]), 'insert soporte');
-                        await dbWrite(supabase.from('llaveros').update({ estado: 'completado' }).eq('id', usuarioProceso.id), 'update llaveros (soporte completado)');
+                        await dbWrite(supabase.from('llaveros').update({ estado: 'completado', rol: 'soporte' }).eq('id', usuarioProceso.id), 'update llaveros (soporte completado)');
                         await enviarMensajeWhatsApp(from, "✅ Consulta registrada. Nos contactaremos a la brevedad.");
+                        await enviarEmailAlternativo(
+                            EMAIL_ADMINISTRACION,
+                            'VUELVE - Nueva consulta/reclamo recibido',
+                            `Nueva consulta registrada desde WhatsApp.\n\nTeléfono: ${from}\n\nMensaje:\n${text}`
+                        );
+                    }
+
+                    else if (usuarioProceso.estado === 'esperando_codigo_retiro') {
+                        const regexRetiro = /^[0-9]{4}$/;
+                        if (!regexRetiro.test(textUpper)) {
+                            await enviarMensajeWhatsApp(from, "❌ Debe ser un código de 4 números. Intentá de nuevo:");
+                        } else {
+                            const custodia = await dbRead(supabase
+                                .from('llaveros')
+                                .select('id')
+                                .eq('codigo_llavero', usuarioProceso.codigo_llavero)
+                                .eq('estado', 'completado')
+                                .eq('rol', 'axion_custodia')
+                                .eq('codigo_retiro', parseInt(textUpper, 10))
+                                .maybeSingle(), 'select llaveros (validar codigo retiro)');
+
+                            if (!custodia) {
+                                await enviarMensajeWhatsApp(from, "❌ Código incorrecto. Intentá de nuevo:");
+                            } else {
+                                await dbWrite(supabase.from('llaveros').update({ estado: 'esperando_confirmacion_retiro' }).eq('id', usuarioProceso.id), 'update llaveros (codigo retiro validado)');
+                                const mensajeAutorizacion = `✅ *Autorizado para retirar el llavero ${usuarioProceso.codigo_llavero}.*\n\nMostrale este mensaje al encargado de sucursal.\n\nCuando lo tengas en tus manos, respondé *OK*. Si no te lo entregaron, respondé *NO*.`;
+                                await enviarMensajeWhatsApp(from, mensajeAutorizacion);
+                            }
+                        }
+                    }
+                    else if (usuarioProceso.estado === 'esperando_confirmacion_retiro') {
+                        if (textUpper === 'OK') {
+                            const custodia = await dbRead(supabase
+                                .from('llaveros')
+                                .select('id')
+                                .eq('codigo_llavero', usuarioProceso.codigo_llavero)
+                                .eq('estado', 'completado')
+                                .eq('rol', 'axion_custodia')
+                                .maybeSingle(), 'select llaveros (custodia a marcar retirada)');
+
+                            if (custodia) {
+                                await dbWrite(supabase.from('llaveros').update({ rol: 'retirado', retirado_en: new Date() }).eq('id', custodia.id), 'update llaveros (marcar retirado)');
+                            }
+                            await dbWrite(supabase.from('llaveros').update({ estado: 'esperando_comentario_retiro' }).eq('id', usuarioProceso.id), 'update llaveros (pide comentario retiro)');
+                            await enviarMensajeWhatsApp(from, "🙌 ¡Listo! Si querés dejarnos un comentario sobre la experiencia, escribilo ahora (o respondé *OMITIR*):");
+                        } else if (textUpper === 'NO') {
+                            await dbWrite(supabase.from('llaveros').update({ estado: 'cancelado', cancelado_en: new Date(), motivo_cancelacion: 'retiro_no_confirmado' }).eq('id', usuarioProceso.id), 'update llaveros (retiro no confirmado)');
+                            await enviarMensajeWhatsApp(from, "⚠️ Registramos que no recibiste el llavero. Nos vamos a contactar para resolverlo.");
+                            await enviarEmailAlternativo(
+                                EMAIL_ADMINISTRACION,
+                                'VUELVE - Retiro NO confirmado por el dueño',
+                                `El dueño autorizado no confirmó haber recibido el llavero ${usuarioProceso.codigo_llavero} (teléfono ${from}). Requiere seguimiento.`
+                            );
+                        } else {
+                            await enviarMensajeWhatsApp(from, "⚠️ Respondé *OK* si lo recibiste, o *NO* si no te lo entregaron.");
+                        }
+                    }
+                    else if (usuarioProceso.estado === 'esperando_comentario_retiro') {
+                        if (textUpper !== 'OMITIR') {
+                            const custodia = await dbRead(supabase
+                                .from('llaveros')
+                                .select('id')
+                                .eq('codigo_llavero', usuarioProceso.codigo_llavero)
+                                .eq('estado', 'completado')
+                                .eq('rol', 'retirado')
+                                .maybeSingle(), 'select llaveros (custodia para comentario)');
+
+                            if (custodia) {
+                                await dbWrite(supabase.from('llaveros').update({ comentario_retiro: text }).eq('id', custodia.id), 'update llaveros (guardar comentario retiro)');
+                            }
+                        }
+                        await dbWrite(supabase.from('llaveros').update({ estado: 'completado', rol: 'retiro_confirmado' }).eq('id', usuarioProceso.id), 'update llaveros (cerrar flujo retiro)');
+                        await enviarMensajeWhatsApp(from, "🎉 ¡Gracias por usar VUELVE!");
                     }
 
                     else if (usuarioProceso.estado === 'esperando_sucursal_personal') {
@@ -588,19 +716,19 @@ app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, async (req, res) =
                         if (!validarCodigoGFinder(textUpper)) {
                             await enviarMensajeWhatsApp(from, "❌ Código inválido.");
                         } else {
-                            const dueños = await dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', textUpper).eq('estado', 'completado'), 'select llaveros (codigo personal suc)');
+                            const dueños = await dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', textUpper).eq('estado', 'completado').eq('rol', 'dueño'), 'select llaveros (codigo personal suc)');
 
                             if (!dueños || dueños.length === 0) {
                                 await enviarMensajeWhatsApp(from, "⚠️ El código no existe.");
                             } else {
                                 const dueñoLlavero = dueños[0];
-                                await dbWrite(supabase.from('llaveros').update({ codigo_llavero: textUpper, estado: 'completado' }).eq('id', usuarioProceso.id), 'update llaveros (custodia completada)');
+                                const codigoRetiro = Math.floor(1000 + Math.random() * 9000);
+                                await dbWrite(supabase.from('llaveros').update({ codigo_llavero: textUpper, estado: 'completado', rol: 'axion_custodia', sucursal_id: sucursalId, codigo_retiro: codigoRetiro }).eq('id', usuarioProceso.id), 'update llaveros (custodia completada)');
                                 await enviarMensajeWhatsApp(from, `⚙️ Custodia completada para Sucursal ${sucursalId}.`);
 
                                 const filasSucursal = await dbRead(supabase.from('sucursales').select('direccion').eq('id_sucursal', sucursalId.toString().trim()), 'select sucursales (direccion)');
                                 const direccionEstacion = (filasSucursal && filasSucursal.length > 0) ? filasSucursal[0].direccion : `Sucursal N° ${sucursalId}`;
 
-                                const codigoRetiro = Math.floor(1000 + Math.random() * 9000);
                                 const nombrePropietario = dueñoLlavero.nombre_usuario ? ` *${dueñoLlavero.nombre_usuario}*` : "";
 
                                 const mensajeDueño = `🚨 *GFinder AXION!*\n\nHola${nombrePropietario}, tu llavero *${textUpper}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}`;
@@ -644,6 +772,15 @@ app.get('/api/dashboard/metrics', limitadorDashboard, async (req, res) => {
 
         if (errSuc) throw errSuc;
 
+        // 2.b Estado de llaveros por rol (activados / en sucursal / retirados)
+        const [{ count: activados, error: errActivados }, { count: enSucursal, error: errEnSucursal }, { count: retirados, error: errRetirados }] = await Promise.all([
+            supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'dueño'),
+            supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'axion_custodia'),
+            supabase.from('llaveros').select('id', { count: 'exact', head: true }).eq('estado', 'completado').eq('rol', 'retirado')
+        ]);
+
+        if (errActivados || errEnSucursal || errRetirados) throw (errActivados || errEnSucursal || errRetirados);
+
         // 3. Calculamos la Tasa de Recuperación
         const activos = metricasGenerales?.total_llaveros_activos || 0;
         const encontrados = metricasGenerales?.total_llaveros_encontrados || 0;
@@ -664,6 +801,11 @@ app.get('/api/dashboard/metrics', limitadorDashboard, async (req, res) => {
             },
             auditoria: {
                 alertas_soporte_pendientes: metricasGenerales?.total_consultas_soporte || 0
+            },
+            estado_llaveros: {
+                activados: activados || 0,
+                esperando_en_sucursal: enSucursal || 0,
+                retirados: retirados || 0
             },
             reporte_corporativo_axion: rankingSucursales || []
         });

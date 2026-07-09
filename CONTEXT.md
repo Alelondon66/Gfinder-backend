@@ -52,10 +52,10 @@ Campos usados en el código: `id`, `telefono_usuario`, `codigo_llavero`, `estado
 Estados (`estado`) identificados en el flujo:
 `esperando_codigo_registro`, `esperando_nombre_registro`, `esperando_celular_alternativo`, `esperando_confirmacion_alta`, `esperando_codigo_encuentro`, `esperando_subopcion_encuentro`, `esperando_ubicacion_finder`, `esperando_mensaje_anonimo`, `esperando_texto_soporte`, `esperando_sucursal_personal`, `esperando_codigo_personal_suc_{N}`, `completado`.
 
-## Puntos a revisar / posibles mejoras (detectados en lectura de código, no implementados aún)
-1. **Secretos hardcodeados en el código**: `WEBHOOK_VERIFY_TOKEN` y la API key del dashboard (`token_secreto_dashboard_axion_2026`) están escritos directamente en el archivo en vez de usar variables de entorno. Deberían moverse a `.env`.
+## Puntos a revisar / posibles mejoras
+1. ~~Secretos hardcodeados en el código~~ — resuelto: `WEBHOOK_VERIFY_TOKEN` y la API key del dashboard ahora están en variables de entorno.
 2. La limpieza automática de procesos abandonados usa un umbral de 300 segundos (5 minutos) sin interacción — confirmar si ese tiempo sigue siendo el deseado.
-3. Revisar si el archivo subido (`server5-7.js`) es la versión más actual en producción o si hay cambios posteriores no reflejados.
+3. ~~Plantilla de WhatsApp `notificacion_llavero_encontrado` (es_AR) sin autorizar por Meta~~ — resuelto: aprobada por Meta (08/07/2026).
 
 ## Preferencias de trabajo de Ale
 - Prefiere que se le pregunte antes de que se desarrolle o escriba código, en vez de asumir directamente.
