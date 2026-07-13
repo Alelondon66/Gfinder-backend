@@ -63,6 +63,37 @@ beforeEach(() => {
     notificaciones.registrarNotificacionPendienteEvento.mock.mockImplementation(async () => {});
 });
 
+test('sin sesión, un agradecimiento ("gracias") recibe una respuesta cálida, no el genérico', async () => {
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'Gracias!'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /De nada/);
+});
+
+test('al revelar una notificación pendiente, se agrega una nota de cierre para no invitar a responder', async () => {
+    repositorio.obtenerLlaveroPorDueno.mock.mockImplementation(async () => ({ id: 5, telefono_dueno: '5491111111' }));
+    repositorio.dbRead.mock.mockImplementation(async () => [{ id: 300, notificacion_pendiente: 'Tu llavero está en la sucursal X.' }]);
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'hola'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /Tu llavero está en la sucursal X/);
+    assert.match(texto, /No hace falta que respondas/);
+});
+
+test('sin sesión, un mensaje no reconocido muestra el menú directo (sin pedir que escriba Hola)', async () => {
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'no entiendo qué hago'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /Bienvenido/);
+});
+
 test('sin sesión, "Hola" muestra el menú con las 4 opciones', async () => {
     const res = crearRes();
     await procesarMensajeWebhook(crearReq('5491111111', 'Hola'), res);
@@ -203,6 +234,45 @@ test('atajo "F" del dueño cierra el evento abierto y avisa a ambas partes', asy
     assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
     assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
     assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
+});
+
+test('atajo "H" del dueño funciona aunque el mensaje venga en otra línea (bug reportado)', async () => {
+    repositorio.obtenerLlaveroPorDueno.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111'
+    }));
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async () => ({
+        id: 300, telefono_finder: '5492222222'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'H\nMuchas gracias, ¿dónde estás?'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.equal(destino, '5492222222');
+    assert.match(texto, /Muchas gracias/);
+});
+
+test('"H" solo, sin sesión activa, pide el formato correcto', async () => {
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'H'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /seguido de tu mensaje/);
+});
+
+test('"H" solo, con sesión activa en el submenú de encuentro, se procesa como elección del submenú (no como atajo)', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5492222222', estado: 'esperando_subopcion_encuentro',
+        evento_id: 300, ultima_interaccion: new Date()
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'H'), res);
+
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 2);
+    assert.equal(repositorio.actualizarSesion.mock.calls[1].arguments[1].estado, 'esperando_mensaje_anonimo');
 });
 
 test('código incorrecto en el retiro descuenta intentos y bloquea al tercer error', async () => {

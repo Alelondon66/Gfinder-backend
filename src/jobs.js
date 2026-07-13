@@ -65,7 +65,7 @@ async function revisarRecordatoriosRetiro() {
             const direccionEstacion = (filasSucursal && filasSucursal.length > 0) ? filasSucursal[0].direccion : `Sucursal N° ${custodia.sucursal_id}`;
             const nombrePropietario = llavero.nombre_dueno ? ` ${llavero.nombre_dueno}` : "";
 
-            const mensajeRecordatorio = `⏰ *Recordatorio VUELVE:* Hola${nombrePropietario}, tu llavero *${llavero.alias || custodia.codigo_llavero}* sigue esperando en:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${custodia.codigo_retiro}`;
+            const mensajeRecordatorio = `⏰ *Recordatorio VUELVE:* Hola${nombrePropietario}, tu llavero *${llavero.alias || custodia.codigo_llavero}* sigue esperando en:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${custodia.codigo_retiro}\n\n✅ Al llegar a la sucursal, escribí *R* para retirarlo.`;
             await registrarNotificacionPendienteEvento(custodia.id, llavero.telefono_dueno, llavero.alias || custodia.codigo_llavero, mensajeRecordatorio);
 
             if (llavero.email_alternativo) {

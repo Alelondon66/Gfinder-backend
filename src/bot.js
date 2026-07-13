@@ -42,7 +42,7 @@ async function manejarAtajoH(from, mensaje) {
     const evento = await repo.obtenerEventoAbierto(llavero.codigo_llavero, 'encuentro');
     if (!evento || !evento.telefono_finder) return false;
 
-    const textoFinal = `💬 *Dueño:* "${mensaje}"\n_(Responder con: H mensaje)_`;
+    const textoFinal = `💬 *El dueño te respondió:* "${mensaje}"\n\n✏️ Para seguir la conversación, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Ya salgo para allá*`;
     await enviarMensajeWhatsApp(evento.telefono_finder, textoFinal);
     return true;
 }
@@ -242,7 +242,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
             if (evento) {
                 const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (mensaje anonimo)');
                 if (llavero) {
-                    const mensajeAlDueño = `💬 *Finder:* "${text}"\n\n_(Responder con: H mensaje)_\n_(Terminar chat: F)_`;
+                    const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu llavero, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${text}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🔒 Para terminar esta conversación, escribí *F*.`;
                     if (evento.notificacion_pendiente) {
                         await repo.actualizarEvento(evento.id, { notificacion_pendiente: mensajeAlDueño });
                     } else {
@@ -361,7 +361,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
             const direccionEstacion = (filasSucursal && filasSucursal.length > 0) ? filasSucursal[0].direccion : `Sucursal N° ${sesion.sucursal_id}`;
             const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
 
-            const mensajeDueño = `🚨 *GFinder AXION!*\n\nHola${nombrePropietario}, tu llavero *${nombreParaTemplate(llavero)}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}`;
+            const mensajeDueño = `🚨 *GFinder AXION!*\n\nHola${nombrePropietario}, tu llavero *${nombreParaTemplate(llavero)}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}\n\n✅ ¡Ya podés ir a buscarlo! Al llegar a la sucursal, escribí *R* para retirarlo.`;
             await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), mensajeDueño);
             return;
         }
@@ -400,27 +400,6 @@ async function procesarMensajeWebhook(req, res) {
             return res.status(200).send('EVENT_RECEIVED');
         }
 
-        if (messageData.type === 'text') {
-            const textoPlano = messageData.text.body.trim();
-            const textoUpper = textoPlano.toUpperCase();
-
-            const notificacionPendiente = await buscarNotificacionPendientePorDueno(from);
-            if (notificacionPendiente) {
-                await repo.actualizarEvento(notificacionPendiente.id, { notificacion_pendiente: null, notificacion_enviada_en: null });
-                await enviarMensajeWhatsApp(from, notificacionPendiente.notificacion_pendiente);
-                return res.status(200).send('EVENT_RECEIVED');
-            }
-
-            if (textoUpper === 'F' && await manejarAtajoF(from)) {
-                return res.status(200).send('EVENT_RECEIVED');
-            }
-
-            if (textoUpper.startsWith('H ')) {
-                await manejarAtajoH(from, textoPlano.substring(2).trim());
-                return res.status(200).send('EVENT_RECEIVED');
-            }
-        }
-
         let sesion = await repo.obtenerSesionActiva(from);
 
         if (sesion && sesion.ultima_interaccion) {
@@ -428,6 +407,35 @@ async function procesarMensajeWebhook(req, res) {
             if (diferenciaSegundos > TIMEOUT_SESION_SEGUNDOS) {
                 await repo.cancelarSesion(sesion.id, 'timeout_5min');
                 sesion = null;
+            }
+        }
+
+        // Los atajos F / H son para el dueño respondiendo fuera de cualquier
+        // flujo guiado. Si hay una sesión activa (ej. finder eligiendo D/H/F
+        // en su propio submenú), NO deben interceptar esas respuestas.
+        if (messageData.type === 'text' && !sesion) {
+            const textoPlano = messageData.text.body.trim();
+            const textoUpper = textoPlano.toUpperCase();
+
+            const notificacionPendiente = await buscarNotificacionPendientePorDueno(from);
+            if (notificacionPendiente) {
+                await repo.actualizarEvento(notificacionPendiente.id, { notificacion_pendiente: null, notificacion_enviada_en: null });
+                await enviarMensajeWhatsApp(from, `${notificacionPendiente.notificacion_pendiente}\n\n_No hace falta que respondas nada más. Si necesitás algo, escribí *Hola*._`);
+                return res.status(200).send('EVENT_RECEIVED');
+            }
+
+            if (textoUpper === 'F' && await manejarAtajoF(from)) {
+                return res.status(200).send('EVENT_RECEIVED');
+            }
+
+            const matchAtajoH = textoPlano.match(/^H\s+([\s\S]+)/i);
+            if (matchAtajoH) {
+                await manejarAtajoH(from, matchAtajoH[1].trim());
+                return res.status(200).send('EVENT_RECEIVED');
+            }
+            if (textoUpper === 'H') {
+                await enviarMensajeWhatsApp(from, "✏️ Escribí *H* seguido de tu mensaje, por ejemplo:\n*H Gracias, ¿dónde estás?*");
+                return res.status(200).send('EVENT_RECEIVED');
             }
         }
 
@@ -456,8 +464,10 @@ async function procesarMensajeWebhook(req, res) {
                 await iniciarSoporte(from);
             } else if (textUpper === '9') {
                 await iniciarPersonalAxion(from);
+            } else if (/^(gracias|graci?as|muchas gracias|muy amable|ok|okay|dale|listo|genial|perfecto|joya|voy|ya voy|👍|🙏)[\s!.]*$/i.test(textUpper)) {
+                await enviarMensajeWhatsApp(from, "🙌 ¡De nada! Cualquier cosa, escribí *Hola* para ver el menú.");
             } else {
-                await enviarMensajeWhatsApp(from, "🤖 Escribí *Hola* para ver el menú.");
+                await mostrarMenu(from);
             }
             return res.status(200).send('EVENT_RECEIVED');
         }
