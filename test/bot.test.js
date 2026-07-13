@@ -205,6 +205,23 @@ test('al responder el código en la desambiguación de "P", reporta la pérdida 
     assert.equal(repositorio.crearEvento.mock.calls[0].arguments[0].codigo_llavero, 'BB2222BW');
 });
 
+test('al responder con el NÚMERO en la desambiguación de "P", reporta la pérdida del llavero correcto', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5491111111', estado: 'esperando_codigo_perdida_ambiguo', ultima_interaccion: new Date()
+    }));
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 6, codigo_llavero: 'BB2222BW', alias: 'Moto', telefono_dueno: '5491111111' },
+        { id: 5, codigo_llavero: 'AA1111AT', alias: 'Auto de Ale', telefono_dueno: '5491111111' }
+    ]);
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', '2'), res);
+
+    // El "2" corresponde al segundo de la lista mostrada: AA1111AT.
+    assert.equal(repositorio.crearEvento.mock.calls.length, 1);
+    assert.equal(repositorio.crearEvento.mock.calls[0].arguments[0].codigo_llavero, 'AA1111AT');
+});
+
 test('"R" con dos llaveros esperando en sucursal pregunta cuál retirar', async () => {
     repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
         { id: 6, codigo_llavero: 'BB2222BW', alias: 'Moto', telefono_dueno: '5491111111' },
@@ -217,9 +234,30 @@ test('"R" con dos llaveros esperando en sucursal pregunta cuál retirar', async 
 
     assert.equal(repositorio.crearSesion.mock.calls.length, 1);
     assert.equal(repositorio.crearSesion.mock.calls[0].arguments[0].estado, 'esperando_codigo_retiro_ambiguo');
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /\*1\.\*/);
+    assert.match(texto, /\*2\.\*/);
 });
 
-test('atajo "F" con dos conversaciones abiertas pide especificar el código', async () => {
+test('al responder con el NÚMERO en la desambiguación de "R", arranca el retiro del llavero correcto', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5491111111', estado: 'esperando_codigo_retiro_ambiguo', ultima_interaccion: new Date()
+    }));
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 6, codigo_llavero: 'BB2222BW', alias: 'Moto', telefono_dueno: '5491111111' },
+        { id: 5, codigo_llavero: 'AA1111AT', alias: 'Auto de Ale', telefono_dueno: '5491111111' }
+    ]);
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async () => ({ id: 900, codigo_retiro: 1234 }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', '1'), res);
+
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 2);
+    assert.equal(repositorio.actualizarSesion.mock.calls[1].arguments[1].codigo_llavero, 'BB2222BW');
+    assert.equal(repositorio.actualizarSesion.mock.calls[1].arguments[1].estado, 'esperando_codigo_retiro');
+});
+
+test('atajo "F" con dos conversaciones abiertas pide especificar el número', async () => {
     repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
         { id: 6, codigo_llavero: 'BB2222BW', alias: 'Moto', telefono_dueno: '5491111111' },
         { id: 5, codigo_llavero: 'AA1111AT', alias: 'Auto de Ale', telefono_dueno: '5491111111' }
@@ -248,6 +286,41 @@ test('atajo "F CODIGO" con dos conversaciones abiertas cierra la correcta sin am
 
     assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
     assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
+});
+
+test('atajo "F 2" (por número) con dos conversaciones abiertas cierra la correcta', async () => {
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 6, codigo_llavero: 'BB2222BW', alias: 'Moto', telefono_dueno: '5491111111' },
+        { id: 5, codigo_llavero: 'AA1111AT', alias: 'Auto de Ale', telefono_dueno: '5491111111' }
+    ]);
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async (codigo) =>
+        codigo === 'AA1111AT' ? { id: 300, telefono_finder: '5492222222' } : { id: 301, telefono_finder: '5493333333' }
+    );
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'F 2'), res);
+
+    // La opción 2 de la lista es AA1111AT (segundo llavero devuelto).
+    assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
+    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
+});
+
+test('atajo "H 2 mensaje" (por número) con dos conversaciones abiertas llega al finder correcto', async () => {
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 6, codigo_llavero: 'BB2222BW', alias: 'Moto', telefono_dueno: '5491111111' },
+        { id: 5, codigo_llavero: 'AA1111AT', alias: 'Auto de Ale', telefono_dueno: '5491111111' }
+    ]);
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async (codigo) =>
+        codigo === 'AA1111AT' ? { id: 300, telefono_finder: '5492222222' } : { id: 301, telefono_finder: '5493333333' }
+    );
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'H 2 Ya salgo para allá'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.equal(destino, '5492222222');
+    assert.match(texto, /Ya salgo para allá/);
 });
 
 test('sin sesión, "Hola" muestra el menú con las 4 opciones', async () => {

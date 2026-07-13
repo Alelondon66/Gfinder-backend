@@ -39,11 +39,23 @@ async function buscarEventosAbiertosDelDueno(from, tipo) {
 }
 
 function formatearOpcionesLlavero(items) {
-    return items.map(({ llavero }) => `• *${nombreParaTemplate(llavero)}* (código ${llavero.codigo_llavero})`).join('\n');
+    return items.map(({ llavero }, i) => `*${i + 1}.* ${nombreParaTemplate(llavero)}`).join('\n');
 }
 
 function formatearOpcionesConversacion(items) {
-    return items.map(c => `• *${c.nombre}* (código ${c.codigo})`).join('\n');
+    return items.map((c, i) => `*${i + 1}.* ${c.nombre}`).join('\n');
+}
+
+// Permite elegir una opción de una lista ambigua por número de posición
+// (más fácil de tipear en el celular) o, como respaldo, por el código
+// completo del llavero — así seguimos aceptando el formato viejo también.
+function elegirPorSelector(opciones, textoIngresado, obtenerCodigo) {
+    const texto = (textoIngresado || '').trim();
+    if (/^\d{1,2}$/.test(texto)) {
+        return opciones[parseInt(texto, 10) - 1] || null;
+    }
+    const codigoUpper = texto.toUpperCase();
+    return opciones.find(o => obtenerCodigo(o) === codigoUpper) || null;
 }
 
 // F y H son bidireccionales: sirven tanto para el dueño respondiéndole al
@@ -69,18 +81,18 @@ async function buscarConversacionesAbiertas(from, tipo) {
     return conversaciones;
 }
 
-async function manejarAtajoF(from, codigoExplicito) {
+async function manejarAtajoF(from, selector) {
     const conversaciones = await buscarConversacionesAbiertas(from, 'encuentro');
     if (conversaciones.length === 0) return false;
 
     let elegido;
-    if (codigoExplicito) {
-        elegido = conversaciones.find(c => c.codigo === codigoExplicito);
+    if (selector) {
+        elegido = elegirPorSelector(conversaciones, selector, c => c.codigo);
         if (!elegido) return false;
     } else if (conversaciones.length === 1) {
         elegido = conversaciones[0];
     } else {
-        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál cerrar escribiendo *F* seguido del código:\n\n${formatearOpcionesConversacion(conversaciones)}\n\nEjemplo: *F ${conversaciones[0].codigo}*`);
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta:\n\n${formatearOpcionesConversacion(conversaciones)}\n\nRespondé con el número de la que querés cerrar, por ejemplo: *F 1*`);
         return true;
     }
 
@@ -93,18 +105,18 @@ async function manejarAtajoF(from, codigoExplicito) {
     return true;
 }
 
-async function manejarAtajoH(from, mensaje, codigoExplicito) {
+async function manejarAtajoH(from, mensaje, selector) {
     const conversaciones = await buscarConversacionesAbiertas(from, 'encuentro');
     if (conversaciones.length === 0) return false;
 
     let elegido;
-    if (codigoExplicito) {
-        elegido = conversaciones.find(c => c.codigo === codigoExplicito);
+    if (selector) {
+        elegido = elegirPorSelector(conversaciones, selector, c => c.codigo);
         if (!elegido) return false;
     } else if (conversaciones.length === 1) {
         elegido = conversaciones[0];
     } else {
-        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál escribiendo *H*, el código y tu mensaje:\n\n${formatearOpcionesConversacion(conversaciones)}\n\nEjemplo: *H ${conversaciones[0].codigo} Ya salgo para allá*`);
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta:\n\n${formatearOpcionesConversacion(conversaciones)}\n\nRespondé con el número y tu mensaje, por ejemplo: *H 1 Ya salgo para allá*`);
         return true;
     }
 
@@ -142,7 +154,7 @@ async function reportarPerdida(from) {
     }
 
     await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_perdida_ambiguo' });
-    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero activo. ¿Cuál perdiste?\n\n${formatearOpcionesLlavero(llaveros.map(llavero => ({ llavero })))}\n\nRespondé con el código de 8 caracteres correspondiente.`);
+    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero activo. ¿Cuál perdiste?\n\n${formatearOpcionesLlavero(llaveros.map(llavero => ({ llavero })))}\n\nRespondé con el número correspondiente.`);
 }
 
 async function iniciarRegistro(from) {
@@ -176,7 +188,7 @@ async function iniciarRecupero(from) {
     }
 
     await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_retiro_ambiguo' });
-    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero esperando en sucursal:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nRespondé con el código de 8 caracteres del que querés retirar.`);
+    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero esperando en sucursal:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nRespondé con el número del que querés retirar.`);
 }
 
 async function iniciarSoporte(from) {
@@ -374,9 +386,9 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
 
         case 'esperando_codigo_retiro_ambiguo': {
             const { coincidencias } = await buscarEventosAbiertosDelDueno(from, 'custodia');
-            const elegido = coincidencias.find(c => c.llavero.codigo_llavero === textUpper);
+            const elegido = elegirPorSelector(coincidencias, text, c => c.llavero.codigo_llavero);
             if (!elegido) {
-                await enviarMensajeWhatsApp(from, "❌ Ese código no está entre los que tenés esperando en sucursal. Fijate arriba y probá de nuevo:");
+                await enviarMensajeWhatsApp(from, "❌ No entendí cuál elegiste. Fijate arriba y respondé con el número correspondiente:");
                 return;
             }
             await repo.actualizarSesion(sesion.id, { estado: 'esperando_codigo_retiro', codigo_llavero: elegido.llavero.codigo_llavero, evento_id: elegido.evento.id });
@@ -386,9 +398,9 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
 
         case 'esperando_codigo_perdida_ambiguo': {
             const llaveros = await repo.obtenerLlaverosPorDueno(from);
-            const elegido = (llaveros || []).find(l => l.codigo_llavero === textUpper);
+            const elegido = elegirPorSelector(llaveros || [], text, l => l.codigo_llavero);
             if (!elegido) {
-                await enviarMensajeWhatsApp(from, "❌ Ese código no está entre tus llaveros activos. Fijate arriba y probá de nuevo:");
+                await enviarMensajeWhatsApp(from, "❌ No entendí cuál elegiste. Fijate arriba y respondé con el número correspondiente:");
                 return;
             }
             await repo.cerrarSesion(sesion.id);
@@ -553,13 +565,13 @@ async function procesarMensajeWebhook(req, res) {
             const textoPlano = messageData.text.body.trim();
             const textoUpper = textoPlano.toUpperCase();
 
-            const matchAtajoF = textoPlano.match(/^F(?:\s+([A-Za-z0-9]{8}))?$/i);
-            if (matchAtajoF && await manejarAtajoF(from, matchAtajoF[1] ? matchAtajoF[1].toUpperCase() : null)) {
+            const matchAtajoF = textoPlano.match(/^F(?:\s+(\d{1,2}|[A-Za-z0-9]{8}))?$/i);
+            if (matchAtajoF && await manejarAtajoF(from, matchAtajoF[1] || null)) {
                 return res.status(200).send('EVENT_RECEIVED');
             }
 
-            const matchAtajoHConCodigo = textoPlano.match(/^H\s+([A-Za-z0-9]{8})\s+([\s\S]+)/i);
-            if (matchAtajoHConCodigo && await manejarAtajoH(from, matchAtajoHConCodigo[2].trim(), matchAtajoHConCodigo[1].toUpperCase())) {
+            const matchAtajoHConSelector = textoPlano.match(/^H\s+(\d{1,2}|[A-Za-z0-9]{8})\s+([\s\S]+)/i);
+            if (matchAtajoHConSelector && await manejarAtajoH(from, matchAtajoHConSelector[2].trim(), matchAtajoHConSelector[1])) {
                 return res.status(200).send('EVENT_RECEIVED');
             }
 
