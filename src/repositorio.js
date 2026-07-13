@@ -37,6 +37,12 @@ function obtenerLlaveroPorDueno(telefono) {
     return dbRead(supabase.from('llaveros').select('*').eq('telefono_dueno', telefono).eq('activo', true).order('creado_en', { ascending: false }).limit(1).maybeSingle(), 'select llaveros (por dueño)');
 }
 
+// A diferencia de obtenerLlaveroPorDueno, trae TODOS los llaveros activos de
+// ese teléfono (una persona puede tener más de uno registrado a su nombre).
+function obtenerLlaverosPorDueno(telefono) {
+    return dbRead(supabase.from('llaveros').select('*').eq('telefono_dueno', telefono).eq('activo', true).order('creado_en', { ascending: false }), 'select llaveros (todos por dueño)');
+}
+
 function crearLlavero({ codigo_llavero, alias, telefono_dueno, nombre_dueno, email_alternativo }) {
     return dbInsertUno(supabase.from('llaveros').insert([{ codigo_llavero, alias, telefono_dueno, nombre_dueno, email_alternativo, activo: true, creado_en: new Date() }]).select(), 'insert llaveros');
 }
@@ -128,7 +134,7 @@ function contarLlaverosConEventoTipo(tipo) {
 
 module.exports = {
     dbRead, dbWrite,
-    obtenerLlaveroPorCodigo, obtenerLlaveroPorDueno, crearLlavero, contarLlaverosActivos,
+    obtenerLlaveroPorCodigo, obtenerLlaveroPorDueno, obtenerLlaverosPorDueno, crearLlavero, contarLlaverosActivos,
     obtenerSesionActiva, crearSesion, actualizarSesion, cancelarSesion, cerrarSesion, listarSesionesCanceladas, purgarSesiones,
     obtenerEventoAbierto, obtenerEventoPorId, crearEvento, actualizarEvento, cerrarEvento,
     obtenerEventosConNotificacionVencida, obtenerEventosCustodiaSinAvisoOperador, obtenerEventosCustodiaHistorico,

@@ -22,12 +22,42 @@ async function buscarNotificacionPendientePorDueno(from) {
     return eventos && eventos.length > 0 ? eventos[0] : null;
 }
 
-async function manejarAtajoF(from) {
-    const llavero = await repo.obtenerLlaveroPorDueno(from);
-    if (!llavero) return false;
+// Una persona puede tener más de un llavero activo. Esto busca, entre TODOS
+// los suyos, cuáles tienen un evento abierto del tipo pedido (custodia,
+// encuentro, etc.) — así no asumimos "el más reciente" cuando hay varios.
+async function buscarEventosAbiertosDelDueno(from, tipo) {
+    const llaveros = await repo.obtenerLlaverosPorDueno(from);
+    if (!llaveros || llaveros.length === 0) return { llaveros: [], coincidencias: [] };
 
-    const evento = await repo.obtenerEventoAbierto(llavero.codigo_llavero, 'encuentro');
-    if (!evento || !evento.telefono_finder) return false;
+    const coincidencias = [];
+    for (const llavero of llaveros) {
+        const evento = await repo.obtenerEventoAbierto(llavero.codigo_llavero, tipo);
+        if (evento) coincidencias.push({ llavero, evento });
+    }
+    return { llaveros, coincidencias };
+}
+
+function formatearOpcionesLlavero(items) {
+    return items.map(({ llavero }) => `• *${nombreParaTemplate(llavero)}* (código ${llavero.codigo_llavero})`).join('\n');
+}
+
+async function manejarAtajoF(from, codigoExplicito) {
+    const { llaveros, coincidencias } = await buscarEventosAbiertosDelDueno(from, 'encuentro');
+    if (llaveros.length === 0 || coincidencias.length === 0) return false;
+
+    let elegido;
+    if (codigoExplicito) {
+        elegido = coincidencias.find(c => c.llavero.codigo_llavero === codigoExplicito);
+        if (!elegido) return false;
+    } else if (coincidencias.length === 1) {
+        elegido = coincidencias[0];
+    } else {
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál cerrar escribiendo *F* seguido del código:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nEjemplo: *F ${coincidencias[0].llavero.codigo_llavero}*`);
+        return true;
+    }
+
+    const { evento } = elegido;
+    if (!evento.telefono_finder) return false;
 
     await repo.cerrarEvento(evento.id, { motivo_cierre: 'dueño_cerro_chat' });
     await enviarMensajeWhatsApp(evento.telefono_finder, "🔒 *Chat finalizado por el dueño.*");
@@ -35,21 +65,55 @@ async function manejarAtajoF(from) {
     return true;
 }
 
-async function manejarAtajoH(from, mensaje) {
-    const llavero = await repo.obtenerLlaveroPorDueno(from);
-    if (!llavero) return false;
+async function manejarAtajoH(from, mensaje, codigoExplicito) {
+    const { llaveros, coincidencias } = await buscarEventosAbiertosDelDueno(from, 'encuentro');
+    if (llaveros.length === 0 || coincidencias.length === 0) return false;
 
-    const evento = await repo.obtenerEventoAbierto(llavero.codigo_llavero, 'encuentro');
-    if (!evento || !evento.telefono_finder) return false;
+    let elegido;
+    if (codigoExplicito) {
+        elegido = coincidencias.find(c => c.llavero.codigo_llavero === codigoExplicito);
+        if (!elegido) return false;
+    } else if (coincidencias.length === 1) {
+        elegido = coincidencias[0];
+    } else {
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál escribiendo *H*, el código y tu mensaje:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nEjemplo: *H ${coincidencias[0].llavero.codigo_llavero} Ya salgo para allá*`);
+        return true;
+    }
 
     const textoFinal = `💬 *El dueño te respondió:* "${mensaje}"\n\n✏️ Para seguir la conversación, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Ya salgo para allá*`;
-    await enviarMensajeWhatsApp(evento.telefono_finder, textoFinal);
+    await enviarMensajeWhatsApp(elegido.evento.telefono_finder, textoFinal);
     return true;
 }
 
 async function mostrarMenu(from) {
-    const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nRespondé con la letra:\n\n*A.* Activar nuevo llavero\n*E.* Encontré un llavero\n*R.* Recuperar mi llavero en sucursal\n*C.* Consultas o Reclamos`;
+    const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nRespondé con la letra:\n\n*A.* Activar nuevo llavero\n*E.* Encontré un llavero\n*R.* Recuperar mi llavero en sucursal\n*P.* Perdí mi llavero\n*C.* Consultas o Reclamos`;
     await enviarMensajeWhatsApp(from, menuTexto);
+}
+
+async function ejecutarReportePerdida(from, llavero) {
+    const yaReportado = await repo.obtenerEventoAbierto(llavero.codigo_llavero, 'perdida_reportada');
+    if (!yaReportado) {
+        await repo.crearEvento({ llavero_id: llavero.id, codigo_llavero: llavero.codigo_llavero, tipo: 'perdida_reportada', estado: 'abierto' });
+    }
+
+    const nombreLlavero = nombreParaTemplate(llavero);
+    await enviarMensajeWhatsApp(from, `🫂 Quedó registrado que tu llavero *${nombreLlavero}* está perdido.\n\nEn cuanto alguien lo encuentre y escanee el código, te vamos a avisar automáticamente por acá.\n\nMientras tanto, quedate tranquilo/a — el sistema está atento. 💙`);
+}
+
+async function reportarPerdida(from) {
+    const llaveros = await repo.obtenerLlaverosPorDueno(from);
+    if (!llaveros || llaveros.length === 0) {
+        await enviarMensajeWhatsApp(from, "⚠️ No encontramos ningún llavero activo a tu nombre.");
+        return;
+    }
+
+    if (llaveros.length === 1) {
+        await ejecutarReportePerdida(from, llaveros[0]);
+        return;
+    }
+
+    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_perdida_ambiguo' });
+    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero activo. ¿Cuál perdiste?\n\n${formatearOpcionesLlavero(llaveros.map(llavero => ({ llavero })))}\n\nRespondé con el código de 8 caracteres correspondiente.`);
 }
 
 async function iniciarRegistro(from) {
@@ -62,21 +126,28 @@ async function iniciarEncuentro(from) {
     await enviarMensajeWhatsApp(from, "🔍 Ingresá el código de 8 caracteres del llavero encontrado:");
 }
 
+async function iniciarSesionRetiro(from, llavero, evento) {
+    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_retiro', codigo_llavero: llavero.codigo_llavero, evento_id: evento.id });
+    await enviarMensajeWhatsApp(from, "🔑 Ingresá el código de autorización que recibiste (lo tenés más arriba en este chat):");
+}
+
 async function iniciarRecupero(from) {
-    const llavero = await repo.obtenerLlaveroPorDueno(from);
-    if (!llavero) {
+    const { llaveros, coincidencias } = await buscarEventosAbiertosDelDueno(from, 'custodia');
+    if (llaveros.length === 0) {
         await enviarMensajeWhatsApp(from, "⚠️ No encontramos ningún llavero activo a tu nombre.");
         return;
     }
-
-    const evento = await repo.obtenerEventoAbierto(llavero.codigo_llavero, 'custodia');
-    if (!evento) {
+    if (coincidencias.length === 0) {
         await enviarMensajeWhatsApp(from, "⚠️ No tenés ningún llavero esperando en sucursal ahora mismo.");
         return;
     }
+    if (coincidencias.length === 1) {
+        await iniciarSesionRetiro(from, coincidencias[0].llavero, coincidencias[0].evento);
+        return;
+    }
 
-    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_retiro', codigo_llavero: llavero.codigo_llavero, evento_id: evento.id });
-    await enviarMensajeWhatsApp(from, "🔑 Ingresá el código de autorización que recibiste (lo tenés más arriba en este chat):");
+    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_retiro_ambiguo' });
+    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero esperando en sucursal:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nRespondé con el código de 8 caracteres del que querés retirar.`);
 }
 
 async function iniciarSoporte(from) {
@@ -204,6 +275,11 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 telefono_finder: from
             });
 
+            const perdidaAbierta = await repo.obtenerEventoAbierto(textUpper, 'perdida_reportada');
+            if (perdidaAbierta) {
+                await repo.cerrarEvento(perdidaAbierta.id, { motivo_cierre: 'llavero_encontrado' });
+            }
+
             await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_subopcion_encuentro' });
 
             const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
@@ -264,6 +340,30 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 'VUELVE - Nueva consulta/reclamo recibido',
                 `Nueva consulta registrada desde WhatsApp.\n\nTeléfono: ${from}\n\nMensaje:\n${text}`
             );
+            return;
+        }
+
+        case 'esperando_codigo_retiro_ambiguo': {
+            const { coincidencias } = await buscarEventosAbiertosDelDueno(from, 'custodia');
+            const elegido = coincidencias.find(c => c.llavero.codigo_llavero === textUpper);
+            if (!elegido) {
+                await enviarMensajeWhatsApp(from, "❌ Ese código no está entre los que tenés esperando en sucursal. Fijate arriba y probá de nuevo:");
+                return;
+            }
+            await repo.actualizarSesion(sesion.id, { estado: 'esperando_codigo_retiro', codigo_llavero: elegido.llavero.codigo_llavero, evento_id: elegido.evento.id });
+            await enviarMensajeWhatsApp(from, "🔑 Ingresá el código de autorización que recibiste (lo tenés más arriba en este chat):");
+            return;
+        }
+
+        case 'esperando_codigo_perdida_ambiguo': {
+            const llaveros = await repo.obtenerLlaverosPorDueno(from);
+            const elegido = (llaveros || []).find(l => l.codigo_llavero === textUpper);
+            if (!elegido) {
+                await enviarMensajeWhatsApp(from, "❌ Ese código no está entre tus llaveros activos. Fijate arriba y probá de nuevo:");
+                return;
+            }
+            await repo.cerrarSesion(sesion.id);
+            await ejecutarReportePerdida(from, elegido);
             return;
         }
 
@@ -424,7 +524,13 @@ async function procesarMensajeWebhook(req, res) {
                 return res.status(200).send('EVENT_RECEIVED');
             }
 
-            if (textoUpper === 'F' && await manejarAtajoF(from)) {
+            const matchAtajoF = textoPlano.match(/^F(?:\s+([A-Za-z0-9]{8}))?$/i);
+            if (matchAtajoF && await manejarAtajoF(from, matchAtajoF[1] ? matchAtajoF[1].toUpperCase() : null)) {
+                return res.status(200).send('EVENT_RECEIVED');
+            }
+
+            const matchAtajoHConCodigo = textoPlano.match(/^H\s+([A-Za-z0-9]{8})\s+([\s\S]+)/i);
+            if (matchAtajoHConCodigo && await manejarAtajoH(from, matchAtajoHConCodigo[2].trim(), matchAtajoHConCodigo[1].toUpperCase())) {
                 return res.status(200).send('EVENT_RECEIVED');
             }
 
@@ -460,6 +566,8 @@ async function procesarMensajeWebhook(req, res) {
                 await iniciarEncuentro(from);
             } else if (textUpper === 'R') {
                 await iniciarRecupero(from);
+            } else if (textUpper === 'P') {
+                await reportarPerdida(from);
             } else if (textUpper === 'C') {
                 await iniciarSoporte(from);
             } else if (textUpper === '9') {
