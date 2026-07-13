@@ -33,12 +33,9 @@ function obtenerLlaveroPorCodigo(codigo) {
     return dbRead(supabase.from('llaveros').select('*').eq('codigo_llavero', codigo).eq('activo', true).maybeSingle(), 'select llaveros (por codigo)');
 }
 
-function obtenerLlaveroPorDueno(telefono) {
-    return dbRead(supabase.from('llaveros').select('*').eq('telefono_dueno', telefono).eq('activo', true).order('creado_en', { ascending: false }).limit(1).maybeSingle(), 'select llaveros (por dueño)');
-}
-
-// A diferencia de obtenerLlaveroPorDueno, trae TODOS los llaveros activos de
-// ese teléfono (una persona puede tener más de uno registrado a su nombre).
+// Trae TODOS los llaveros activos de ese teléfono — una persona puede tener
+// más de uno registrado a su nombre. Nunca usar "el más reciente": ya causó
+// bugs reales de notificaciones/atajos que ignoraban llaveros más viejos.
 function obtenerLlaverosPorDueno(telefono) {
     return dbRead(supabase.from('llaveros').select('*').eq('telefono_dueno', telefono).eq('activo', true).order('creado_en', { ascending: false }), 'select llaveros (todos por dueño)');
 }
@@ -134,7 +131,7 @@ function contarLlaverosConEventoTipo(tipo) {
 
 module.exports = {
     dbRead, dbWrite,
-    obtenerLlaveroPorCodigo, obtenerLlaveroPorDueno, obtenerLlaverosPorDueno, crearLlavero, contarLlaverosActivos,
+    obtenerLlaveroPorCodigo, obtenerLlaverosPorDueno, crearLlavero, contarLlaverosActivos,
     obtenerSesionActiva, crearSesion, actualizarSesion, cancelarSesion, cerrarSesion, listarSesionesCanceladas, purgarSesiones,
     obtenerEventoAbierto, obtenerEventoPorId, crearEvento, actualizarEvento, cerrarEvento,
     obtenerEventosConNotificacionVencida, obtenerEventosCustodiaSinAvisoOperador, obtenerEventosCustodiaHistorico,

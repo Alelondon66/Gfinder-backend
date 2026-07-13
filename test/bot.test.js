@@ -44,7 +44,6 @@ beforeEach(() => {
     // Defaults seguros para no pegarle a la red real en ningún test.
     repositorio.dbRead.mock.mockImplementation(async () => null);
     repositorio.dbWrite.mock.mockImplementation(async () => true);
-    repositorio.obtenerLlaveroPorDueno.mock.mockImplementation(async () => null);
     repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => []);
     repositorio.obtenerSesionActiva.mock.mockImplementation(async () => null);
     repositorio.crearSesion.mock.mockImplementation(async () => ({ id: 100 }));
@@ -74,7 +73,7 @@ test('sin sesión, un agradecimiento ("gracias") recibe una respuesta cálida, n
 });
 
 test('al revelar una notificación pendiente, se agrega una nota de cierre para no invitar a responder', async () => {
-    repositorio.obtenerLlaveroPorDueno.mock.mockImplementation(async () => ({ id: 5, telefono_dueno: '5491111111' }));
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [{ id: 5, telefono_dueno: '5491111111' }]);
     repositorio.dbRead.mock.mockImplementation(async () => [{ id: 300, notificacion_pendiente: 'Tu llavero está en la sucursal X.' }]);
 
     const res = crearRes();
@@ -84,6 +83,27 @@ test('al revelar una notificación pendiente, se agrega una nota de cierre para 
     const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.match(texto, /Tu llavero está en la sucursal X/);
     assert.match(texto, /No hace falta que respondas/);
+});
+
+test('la notificación pendiente se encuentra aunque esté en un llavero que NO es el más reciente (bug reportado)', async () => {
+    // El dueño tiene dos llaveros; el aviso pendiente pertenece al primero (el más viejo).
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 6, telefono_dueno: '5491111111' }, // más reciente, sin nada pendiente
+        { id: 5, telefono_dueno: '5491111111' }  // más viejo, con el aviso pendiente
+    ]);
+    repositorio.dbRead.mock.mockImplementation(async (promesa, contexto) => {
+        if (contexto === 'select eventos (notificacion pendiente por dueño)') {
+            return [{ id: 300, notificacion_pendiente: 'Perdiste tu llavero? Parece que lo encontraron.' }];
+        }
+        return null;
+    });
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'HOLA'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /Parece que lo encontraron/);
 });
 
 test('sin sesión, un mensaje no reconocido muestra el menú directo (sin pedir que escriba Hola)', async () => {

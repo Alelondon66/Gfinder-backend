@@ -8,13 +8,14 @@ function nombreParaTemplate(llavero) {
 }
 
 async function buscarNotificacionPendientePorDueno(from) {
-    const llavero = await repo.obtenerLlaveroPorDueno(from);
-    if (!llavero) return null;
+    const llaveros = await repo.obtenerLlaverosPorDueno(from);
+    if (!llaveros || llaveros.length === 0) return null;
 
+    const idsLlaveros = llaveros.map(l => l.id);
     const eventos = await repo.dbRead(supabase
         .from('eventos')
         .select('id, notificacion_pendiente')
-        .eq('llavero_id', llavero.id)
+        .in('llavero_id', idsLlaveros)
         .not('notificacion_pendiente', 'is', null)
         .order('notificacion_enviada_en', { ascending: false })
         .limit(1), 'select eventos (notificacion pendiente por dueño)');
