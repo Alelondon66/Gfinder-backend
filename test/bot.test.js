@@ -391,6 +391,26 @@ test('atajo "F" del dueño cierra el evento abierto y avisa a ambas partes', asy
     assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
 });
 
+test('"H mensaje" del dueño llega al finder aunque haya un backlog de notificaciones pendientes sin revelar (bug reportado)', async () => {
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111' }
+    ]);
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async () => ({
+        id: 300, telefono_finder: '5492222222'
+    }));
+    // Si esto se llegara a consultar, significa que el backlog "ganó" por error.
+    repositorio.dbRead.mock.mockImplementation(async () => [{ id: 999, notificacion_pendiente: 'Notificación vieja sin destrabar' }]);
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'H Ya salgo para allá'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.equal(destino, '5492222222');
+    assert.match(texto, /Ya salgo para allá/);
+    assert.doesNotMatch(texto, /Notificación vieja/);
+});
+
 test('atajo "H" del dueño funciona aunque el mensaje venga en otra línea (bug reportado)', async () => {
     repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
         { id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111' }

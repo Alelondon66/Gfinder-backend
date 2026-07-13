@@ -514,16 +514,16 @@ async function procesarMensajeWebhook(req, res) {
         // Los atajos F / H son para el dueño respondiendo fuera de cualquier
         // flujo guiado. Si hay una sesión activa (ej. finder eligiendo D/H/F
         // en su propio submenú), NO deben interceptar esas respuestas.
+        //
+        // Importante: los comandos explícitos (F, H mensaje) se revisan ANTES
+        // que la revelación de notificaciones pendientes. Si no fuera así, un
+        // backlog de notificaciones sin destrabar (algo común si el dueño no
+        // responde seguido) se comería cualquier intento real de usar F/H,
+        // revelando siempre "lo próximo de la cola" en vez de procesar el
+        // comando — eso pasó en una prueba real.
         if (messageData.type === 'text' && !sesion) {
             const textoPlano = messageData.text.body.trim();
             const textoUpper = textoPlano.toUpperCase();
-
-            const notificacionPendiente = await buscarNotificacionPendientePorDueno(from);
-            if (notificacionPendiente) {
-                await repo.actualizarEvento(notificacionPendiente.id, { notificacion_pendiente: null, notificacion_enviada_en: null });
-                await enviarMensajeWhatsApp(from, `${notificacionPendiente.notificacion_pendiente}\n\n_No hace falta que respondas nada más. Si necesitás algo, escribí *Hola*._`);
-                return res.status(200).send('EVENT_RECEIVED');
-            }
 
             const matchAtajoF = textoPlano.match(/^F(?:\s+([A-Za-z0-9]{8}))?$/i);
             if (matchAtajoF && await manejarAtajoF(from, matchAtajoF[1] ? matchAtajoF[1].toUpperCase() : null)) {
@@ -536,12 +536,18 @@ async function procesarMensajeWebhook(req, res) {
             }
 
             const matchAtajoH = textoPlano.match(/^H\s+([\s\S]+)/i);
-            if (matchAtajoH) {
-                await manejarAtajoH(from, matchAtajoH[1].trim());
+            if (matchAtajoH && await manejarAtajoH(from, matchAtajoH[1].trim())) {
                 return res.status(200).send('EVENT_RECEIVED');
             }
             if (textoUpper === 'H') {
                 await enviarMensajeWhatsApp(from, "✏️ Escribí *H* seguido de tu mensaje, por ejemplo:\n*H Gracias, ¿dónde estás?*");
+                return res.status(200).send('EVENT_RECEIVED');
+            }
+
+            const notificacionPendiente = await buscarNotificacionPendientePorDueno(from);
+            if (notificacionPendiente) {
+                await repo.actualizarEvento(notificacionPendiente.id, { notificacion_pendiente: null, notificacion_enviada_en: null });
+                await enviarMensajeWhatsApp(from, `${notificacionPendiente.notificacion_pendiente}\n\n_No hace falta que respondas nada más. Si necesitás algo, escribí *Hola*._`);
                 return res.status(200).send('EVENT_RECEIVED');
             }
         }
