@@ -73,7 +73,7 @@ test('sin sesión, un agradecimiento ("gracias") recibe una respuesta cálida, n
     assert.match(texto, /De nada/);
 });
 
-test('al revelar una notificación pendiente, se agrega una nota de cierre para no invitar a responder', async () => {
+test('al revelar una notificación pendiente, se agrega una nota de cierre', async () => {
     repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [{ id: 5, telefono_dueno: '5491111111' }]);
     repositorio.dbRead.mock.mockImplementation(async () => [{ id: 300, notificacion_pendiente: 'Tu llavero está en la sucursal X.' }]);
 
@@ -83,7 +83,7 @@ test('al revelar una notificación pendiente, se agrega una nota de cierre para 
     assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
     const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.match(texto, /Tu llavero está en la sucursal X/);
-    assert.match(texto, /No hace falta que respondas/);
+    assert.match(texto, /escribí \*Hola\*/);
 });
 
 test('la notificación pendiente se encuentra aunque esté en un llavero que NO es el más reciente (bug reportado)', async () => {
@@ -162,7 +162,9 @@ test('al encontrarse un llavero con una pérdida reportada abierta, esa pérdida
     repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => ({
         id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111', nombre_dueno: 'Ale'
     }));
-    repositorio.obtenerEventoAbierto.mock.mockImplementation(async () => ({ id: 900 }));
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async (codigo, tipo) =>
+        tipo === 'perdida_reportada' ? { id: 900 } : null
+    );
 
     const res = crearRes();
     await procesarMensajeWebhook(crearReq('5492222222', 'AA1111AT'), res);
@@ -447,6 +449,27 @@ test('código de encuentro inexistente no crea evento', async () => {
     await procesarMensajeWebhook(crearReq('5492222222', 'AA1111AT'), res);
 
     assert.equal(repositorio.crearEvento.mock.calls.length, 0);
+});
+
+test('reingresar el mismo código de encuentro reutiliza la conversación abierta en vez de duplicarla (bug reportado)', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5492222222', estado: 'esperando_codigo_encuentro', ultima_interaccion: new Date()
+    }));
+    repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111', nombre_dueno: 'Ale'
+    }));
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async (codigo, tipo) =>
+        tipo === 'encuentro' ? { id: 777, telefono_finder: '5492222222' } : null
+    );
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'AA1111AT'), res);
+
+    assert.equal(repositorio.crearEvento.mock.calls.length, 0);
+    assert.equal(repositorio.actualizarEvento.mock.calls.length, 1);
+    assert.equal(repositorio.actualizarEvento.mock.calls[0].arguments[0], 777);
+    // No se vuelve a mandar la plantilla/alerta al dueño para no duplicar avisos.
+    assert.equal(notificaciones.registrarNotificacionPendienteEvento.mock.calls.length, 0);
 });
 
 test('el finder puede seguir la conversación con "H mensaje" después de su primer mensaje (bug reportado)', async () => {

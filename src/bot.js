@@ -308,13 +308,26 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 return;
             }
 
-            const evento = await repo.crearEvento({
-                llavero_id: llavero.id,
-                codigo_llavero: textUpper,
-                tipo: 'encuentro',
-                estado: 'abierto',
-                telefono_finder: from
-            });
+            // Si ya había una conversación "encuentro" abierta para este código
+            // (ej. el mismo finder reingresó el código de nuevo), la reutilizamos
+            // en vez de crear una duplicada — evita conversaciones "fantasma"
+            // repetidas cuando alguien hay que desambiguar con H/F.
+            let evento = await repo.obtenerEventoAbierto(textUpper, 'encuentro');
+            if (evento) {
+                await repo.actualizarEvento(evento.id, { telefono_finder: from });
+            } else {
+                evento = await repo.crearEvento({
+                    llavero_id: llavero.id,
+                    codigo_llavero: textUpper,
+                    tipo: 'encuentro',
+                    estado: 'abierto',
+                    telefono_finder: from
+                });
+
+                const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
+                const alertaInmediata = `🚨 *GFinder:* Hola${nombrePropietario}, ingresaron el código de tu llavero *${nombreParaTemplate(llavero)}*. Te avisaremos apenas definan la entrega.`;
+                await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), alertaInmediata);
+            }
 
             const perdidaAbierta = await repo.obtenerEventoAbierto(textUpper, 'perdida_reportada');
             if (perdidaAbierta) {
@@ -322,11 +335,6 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
             }
 
             await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_subopcion_encuentro' });
-
-            const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
-            const alertaInmediata = `🚨 *GFinder:* Hola${nombrePropietario}, ingresaron el código de tu llavero *${nombreParaTemplate(llavero)}*. Te avisaremos apenas definan la entrega.`;
-            await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), alertaInmediata);
-
             await enviarMensajeWhatsApp(from, `✅ ¡Llavero localizado!\n\nSeleccioná:\n*D.* Ver dónde devolverlo\n*H.* Hablar seguro con el dueño`);
             return;
         }
@@ -368,7 +376,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 }
             }
             await repo.cerrarSesion(sesion.id);
-            await enviarMensajeWhatsApp(from, "📲 Mensaje enviado. Te avisaremos si el dueño responde.");
+            await enviarMensajeWhatsApp(from, "📲 Mensaje enviado. Te avisaremos si el dueño responde.\n\n_¿Querés agregar algo más? Escribí *H* seguido de tu mensaje (no alcanza con mandarlo solo)._");
             return;
         }
 
@@ -587,7 +595,7 @@ async function procesarMensajeWebhook(req, res) {
             const notificacionPendiente = await buscarNotificacionPendientePorDueno(from);
             if (notificacionPendiente) {
                 await repo.actualizarEvento(notificacionPendiente.id, { notificacion_pendiente: null, notificacion_enviada_en: null });
-                await enviarMensajeWhatsApp(from, `${notificacionPendiente.notificacion_pendiente}\n\n_No hace falta que respondas nada más. Si necesitás algo, escribí *Hola*._`);
+                await enviarMensajeWhatsApp(from, `${notificacionPendiente.notificacion_pendiente}\n\n_Si necesitás algo más, escribí *Hola* para ver el menú._`);
                 return res.status(200).send('EVENT_RECEIVED');
             }
         }
