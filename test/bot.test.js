@@ -53,6 +53,7 @@ beforeEach(() => {
     repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => null);
     repositorio.crearLlavero.mock.mockImplementation(async () => ({ id: 1 }));
     repositorio.obtenerEventoAbierto.mock.mockImplementation(async () => null);
+    repositorio.obtenerEventosAbiertosPorFinder.mock.mockImplementation(async () => []);
     repositorio.obtenerEventoPorId.mock.mockImplementation(async () => null);
     repositorio.crearEvento.mock.mockImplementation(async () => ({ id: 200 }));
     repositorio.actualizarEvento.mock.mockImplementation(async () => true);
@@ -373,6 +374,42 @@ test('código de encuentro inexistente no crea evento', async () => {
     await procesarMensajeWebhook(crearReq('5492222222', 'AA1111AT'), res);
 
     assert.equal(repositorio.crearEvento.mock.calls.length, 0);
+});
+
+test('el finder puede seguir la conversación con "H mensaje" después de su primer mensaje (bug reportado)', async () => {
+    // El finder NO es dueño de ningún llavero (obtenerLlaverosPorDueno -> []
+    // por default), pero SÍ tiene un evento de encuentro abierto como finder.
+    repositorio.obtenerEventosAbiertosPorFinder.mock.mockImplementation(async () => [
+        { id: 300, llavero_id: 5, telefono_finder: '5492222222' }
+    ]);
+    repositorio.dbRead.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111', alias: 'Auto de Ale'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'H te lo dejo en la maceta'), res);
+
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.equal(destino, '5491111111');
+    assert.match(texto, /te lo dejo en la maceta/);
+    assert.match(texto, /La persona que encontró tu llavero/);
+});
+
+test('el finder puede cerrar la conversación con "F"', async () => {
+    repositorio.obtenerEventosAbiertosPorFinder.mock.mockImplementation(async () => [
+        { id: 300, llavero_id: 5, telefono_finder: '5492222222' }
+    ]);
+    repositorio.dbRead.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111', alias: 'Auto de Ale'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'F'), res);
+
+    assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
+    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
 });
 
 test('atajo "F" del dueño cierra el evento abierto y avisa a ambas partes', async () => {

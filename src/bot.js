@@ -42,47 +42,75 @@ function formatearOpcionesLlavero(items) {
     return items.map(({ llavero }) => `• *${nombreParaTemplate(llavero)}* (código ${llavero.codigo_llavero})`).join('\n');
 }
 
+function formatearOpcionesConversacion(items) {
+    return items.map(c => `• *${c.nombre}* (código ${c.codigo})`).join('\n');
+}
+
+// F y H son bidireccionales: sirven tanto para el dueño respondiéndole al
+// finder, como para el finder respondiéndole al dueño (ej. un segundo
+// mensaje después del primero que mandó desde el submenú D/H/F). Por eso acá
+// se buscan las conversaciones abiertas en los dos roles, no solo "dueño".
+async function buscarConversacionesAbiertas(from, tipo) {
+    const conversaciones = [];
+
+    const { coincidencias: comoDueño } = await buscarEventosAbiertosDelDueno(from, tipo);
+    for (const { llavero, evento } of comoDueño) {
+        conversaciones.push({ codigo: llavero.codigo_llavero, nombre: nombreParaTemplate(llavero), evento, destinatario: evento.telefono_finder, rolPropio: 'dueño' });
+    }
+
+    const eventosComoFinder = await repo.obtenerEventosAbiertosPorFinder(from, tipo);
+    for (const evento of (eventosComoFinder || [])) {
+        const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (atajo del finder)');
+        if (llavero) {
+            conversaciones.push({ codigo: llavero.codigo_llavero, nombre: nombreParaTemplate(llavero), evento, destinatario: llavero.telefono_dueno, rolPropio: 'finder' });
+        }
+    }
+
+    return conversaciones;
+}
+
 async function manejarAtajoF(from, codigoExplicito) {
-    const { llaveros, coincidencias } = await buscarEventosAbiertosDelDueno(from, 'encuentro');
-    if (llaveros.length === 0 || coincidencias.length === 0) return false;
+    const conversaciones = await buscarConversacionesAbiertas(from, 'encuentro');
+    if (conversaciones.length === 0) return false;
 
     let elegido;
     if (codigoExplicito) {
-        elegido = coincidencias.find(c => c.llavero.codigo_llavero === codigoExplicito);
+        elegido = conversaciones.find(c => c.codigo === codigoExplicito);
         if (!elegido) return false;
-    } else if (coincidencias.length === 1) {
-        elegido = coincidencias[0];
+    } else if (conversaciones.length === 1) {
+        elegido = conversaciones[0];
     } else {
-        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál cerrar escribiendo *F* seguido del código:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nEjemplo: *F ${coincidencias[0].llavero.codigo_llavero}*`);
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál cerrar escribiendo *F* seguido del código:\n\n${formatearOpcionesConversacion(conversaciones)}\n\nEjemplo: *F ${conversaciones[0].codigo}*`);
         return true;
     }
 
-    const { evento } = elegido;
-    if (!evento.telefono_finder) return false;
+    if (!elegido.destinatario) return false;
 
-    await repo.cerrarEvento(evento.id, { motivo_cierre: 'dueño_cerro_chat' });
-    await enviarMensajeWhatsApp(evento.telefono_finder, "🔒 *Chat finalizado por el dueño.*");
+    const quienCerro = elegido.rolPropio === 'dueño' ? 'el dueño' : 'quien encontró tu llavero';
+    await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: `${elegido.rolPropio}_cerro_chat` });
+    await enviarMensajeWhatsApp(elegido.destinatario, `🔒 *Chat finalizado por ${quienCerro}.*`);
     await enviarMensajeWhatsApp(from, "🔒 *Chat cerrado.*");
     return true;
 }
 
 async function manejarAtajoH(from, mensaje, codigoExplicito) {
-    const { llaveros, coincidencias } = await buscarEventosAbiertosDelDueno(from, 'encuentro');
-    if (llaveros.length === 0 || coincidencias.length === 0) return false;
+    const conversaciones = await buscarConversacionesAbiertas(from, 'encuentro');
+    if (conversaciones.length === 0) return false;
 
     let elegido;
     if (codigoExplicito) {
-        elegido = coincidencias.find(c => c.llavero.codigo_llavero === codigoExplicito);
+        elegido = conversaciones.find(c => c.codigo === codigoExplicito);
         if (!elegido) return false;
-    } else if (coincidencias.length === 1) {
-        elegido = coincidencias[0];
+    } else if (conversaciones.length === 1) {
+        elegido = conversaciones[0];
     } else {
-        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál escribiendo *H*, el código y tu mensaje:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nEjemplo: *H ${coincidencias[0].llavero.codigo_llavero} Ya salgo para allá*`);
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de una conversación abierta. Especificá cuál escribiendo *H*, el código y tu mensaje:\n\n${formatearOpcionesConversacion(conversaciones)}\n\nEjemplo: *H ${conversaciones[0].codigo} Ya salgo para allá*`);
         return true;
     }
 
-    const textoFinal = `💬 *El dueño te respondió:* "${mensaje}"\n\n✏️ Para seguir la conversación, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Ya salgo para allá*`;
-    await enviarMensajeWhatsApp(elegido.evento.telefono_finder, textoFinal);
+    const remitente = elegido.rolPropio === 'dueño' ? 'El dueño' : 'La persona que encontró tu llavero';
+    const textoFinal = `💬 *${remitente} te respondió:* "${mensaje}"\n\n✏️ Para seguir la conversación, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Ya salgo para allá*`;
+    await enviarMensajeWhatsApp(elegido.destinatario, textoFinal);
     return true;
 }
 

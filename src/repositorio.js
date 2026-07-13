@@ -89,6 +89,13 @@ function obtenerEventoAbierto(codigoLlavero, tipo) {
     return dbRead(supabase.from('eventos').select('*').eq('codigo_llavero', codigoLlavero).eq('tipo', tipo).neq('estado', 'cerrado').neq('estado', 'retirado').order('creado_en', { ascending: false }).limit(1).maybeSingle(), 'select eventos (abierto)');
 }
 
+// A diferencia de obtenerEventoAbierto (que busca por código, del lado del
+// dueño), esto busca del lado del finder: eventos abiertos donde ESTE
+// teléfono es quien encontró el llavero, sin importar de quién es.
+function obtenerEventosAbiertosPorFinder(telefonoFinder, tipo) {
+    return dbRead(supabase.from('eventos').select('*').eq('telefono_finder', telefonoFinder).eq('tipo', tipo).neq('estado', 'cerrado').neq('estado', 'retirado').order('creado_en', { ascending: false }), 'select eventos (abiertos por finder)');
+}
+
 function obtenerEventoPorId(id) {
     return dbRead(supabase.from('eventos').select('*').eq('id', id).maybeSingle(), 'select eventos (por id)');
 }
@@ -133,7 +140,7 @@ module.exports = {
     dbRead, dbWrite,
     obtenerLlaveroPorCodigo, obtenerLlaverosPorDueno, crearLlavero, contarLlaverosActivos,
     obtenerSesionActiva, crearSesion, actualizarSesion, cancelarSesion, cerrarSesion, listarSesionesCanceladas, purgarSesiones,
-    obtenerEventoAbierto, obtenerEventoPorId, crearEvento, actualizarEvento, cerrarEvento,
+    obtenerEventoAbierto, obtenerEventosAbiertosPorFinder, obtenerEventoPorId, crearEvento, actualizarEvento, cerrarEvento,
     obtenerEventosConNotificacionVencida, obtenerEventosCustodiaSinAvisoOperador, obtenerEventosCustodiaHistorico,
     contarEventos, contarLlaverosConEventoTipo
 };
