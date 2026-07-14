@@ -319,7 +319,8 @@ test('atajo "H 2 mensaje" (por número) con dos conversaciones abiertas llega al
     const res = crearRes();
     await procesarMensajeWebhook(crearReq('5491111111', 'H 2 Ya salgo para allá'), res);
 
-    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    // Un mensaje al finder con el contenido, y uno de confirmación de vuelta al remitente.
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
     const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.equal(destino, '5492222222');
     assert.match(texto, /Ya salgo para allá/);
@@ -485,11 +486,14 @@ test('el finder puede seguir la conversación con "H mensaje" después de su pri
     const res = crearRes();
     await procesarMensajeWebhook(crearReq('5492222222', 'H te lo dejo en la maceta'), res);
 
-    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
     const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.equal(destino, '5491111111');
     assert.match(texto, /te lo dejo en la maceta/);
     assert.match(texto, /La persona que encontró tu llavero/);
+    // El remitente también recibe confirmación de que se mandó.
+    const [destinoConfirmacion] = notificaciones.enviarMensajeWhatsApp.mock.calls[1].arguments;
+    assert.equal(destinoConfirmacion, '5492222222');
 });
 
 test('el finder puede cerrar la conversación con "F"', async () => {
@@ -537,7 +541,7 @@ test('"H mensaje" del dueño llega al finder aunque haya un backlog de notificac
     const res = crearRes();
     await procesarMensajeWebhook(crearReq('5491111111', 'H Ya salgo para allá'), res);
 
-    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
     const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.equal(destino, '5492222222');
     assert.match(texto, /Ya salgo para allá/);
@@ -555,7 +559,7 @@ test('atajo "H" del dueño funciona aunque el mensaje venga en otra línea (bug 
     const res = crearRes();
     await procesarMensajeWebhook(crearReq('5491111111', 'H\nMuchas gracias, ¿dónde estás?'), res);
 
-    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 1);
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
     const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.equal(destino, '5492222222');
     assert.match(texto, /Muchas gracias/);

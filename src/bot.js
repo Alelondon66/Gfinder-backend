@@ -123,6 +123,7 @@ async function manejarAtajoH(from, mensaje, selector) {
     const remitente = elegido.rolPropio === 'dueño' ? 'El dueño' : 'La persona que encontró tu llavero';
     const textoFinal = `💬 *${remitente} te respondió:* "${mensaje}"\n\n✏️ Para seguir la conversación, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Ya salgo para allá*`;
     await enviarMensajeWhatsApp(elegido.destinatario, textoFinal);
+    await enviarMensajeWhatsApp(from, "✅ Mensaje enviado.\n\n_Para seguir escribiendo, usá *H* + tu mensaje de nuevo._");
     return true;
 }
 
