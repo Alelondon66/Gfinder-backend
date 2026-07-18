@@ -16,5 +16,8 @@
     "express-rate-limit": "^8.5.2"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "qrcode": "^1.5.4"
+  }
 }

@@ -3,10 +3,11 @@ const bodyParser = require('body-parser');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 
-const { compararSeguro } = require('./src/config');
+const { compararSeguro, WA_PHONE_NUMBER } = require('./src/config');
 const { procesarMensajeWebhook } = require('./src/bot');
 const { obtenerMetricasDashboard, renderizarPaginaDashboard } = require('./src/dashboard');
 const { iniciarJobs } = require('./src/jobs');
+const { resolverRedireccionQR } = require('./src/qr');
 
 const app = express();
 
@@ -46,6 +47,13 @@ const limitadorDashboard = rateLimit({
     legacyHeaders: false
 });
 
+const limitadorQR = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 app.get('/webhook', limitadorWebhook, (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -58,6 +66,17 @@ app.get('/webhook', limitadorWebhook, (req, res) => {
 });
 
 app.post('/webhook', limitadorWebhook, verificarFirmaWebhook, procesarMensajeWebhook);
+
+// 🔗 REDIRECCIÓN DEL QR IMPRESO EN CADA LLAVERO
+app.get('/q/:codigo', limitadorQR, async (req, res) => {
+    try {
+        const url = await resolverRedireccionQR(req.params.codigo);
+        return res.redirect(302, url);
+    } catch (error) {
+        console.error('❌ Error redirección QR:', error.message);
+        return res.redirect(302, `https://wa.me/${WA_PHONE_NUMBER}`);
+    }
+});
 
 // 📊 ENDPOINT DEL DASHBOARD COMERCIAL (MÉTRICAS GFINDER, formato JSON para integraciones)
 app.get('/api/dashboard/metrics', limitadorDashboard, async (req, res) => {
