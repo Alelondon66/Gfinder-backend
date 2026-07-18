@@ -9,8 +9,7 @@ const path = require('path');
 const QRCode = require('qrcode');
 const { validarCodigoGFinder } = require('../src/validaciones');
 
-// Cambiar por el dominio propio (ej. https://vuelve.ar) cuando esté apuntando al servidor.
-const BASE_URL = process.env.QR_BASE_URL || 'https://gfinder-backend-production.up.railway.app';
+const BASE_URL = process.env.QR_BASE_URL || 'https://wapp.vuelve.ar';
 
 const CANTIDAD = parseInt(process.argv[2], 10) || 50;
 const CARPETA_SALIDA = path.join(__dirname, '..', 'qr_lote_prueba');
