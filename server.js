@@ -11,6 +11,11 @@ const { resolverRedireccionQR } = require('./src/qr');
 
 const app = express();
 
+// Railway (y la mayoría de los PaaS) corre la app detrás de un proxy
+// inverso. Sin esto, Express no confía en el header X-Forwarded-For y
+// express-rate-limit tira un ValidationError en cada request.
+app.set('trust proxy', 1);
+
 app.use('/webhook', bodyParser.json({
     verify: (req, res, buf) => { req.rawBody = buf; }
 }));
