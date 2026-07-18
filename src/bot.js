@@ -168,6 +168,14 @@ async function iniciarEncuentro(from) {
     await enviarMensajeWhatsApp(from, "🔍 Ingresá el código de 8 caracteres del llavero encontrado:");
 }
 
+// Soporta "A CODIGO" / "E CODIGO" como un solo mensaje (lo que manda el QR
+// impreso en el llavero) en vez de forzar dos mensajes separados: crea la
+// sesión y procesa el código en el mismo turno.
+async function iniciarConCodigoInline(from, estadoInicial, codigo) {
+    const sesion = await repo.crearSesion({ telefono: from, estado: estadoInicial });
+    await manejarEstadoSesion(from, sesion, codigo, codigo.toUpperCase());
+}
+
 async function iniciarSesionRetiro(from, llavero, evento) {
     await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_retiro', codigo_llavero: llavero.codigo_llavero, evento_id: evento.id });
     await enviarMensajeWhatsApp(from, "🔑 Ingresá el código de autorización que recibiste (lo tenés más arriba en este chat):");
@@ -618,8 +626,12 @@ async function procesarMensajeWebhook(req, res) {
                 await mostrarMenu(from);
             } else if (textUpper === 'A') {
                 await iniciarRegistro(from);
+            } else if (/^A\s+[A-Za-z0-9]{8}$/i.test(text)) {
+                await iniciarConCodigoInline(from, 'esperando_codigo_registro', text.split(/\s+/)[1]);
             } else if (textUpper === 'E') {
                 await iniciarEncuentro(from);
+            } else if (/^E\s+[A-Za-z0-9]{8}$/i.test(text)) {
+                await iniciarConCodigoInline(from, 'esperando_codigo_encuentro', text.split(/\s+/)[1]);
             } else if (textUpper === 'R') {
                 await iniciarRecupero(from);
             } else if (textUpper === 'P') {

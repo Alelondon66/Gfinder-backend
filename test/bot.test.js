@@ -347,6 +347,36 @@ test('sin sesión, "A" crea una sesión de registro', async () => {
     assert.equal(args.estado, 'esperando_codigo_registro');
 });
 
+test('"A CODIGO" en un solo mensaje (como manda el QR) activa el registro directo (bug reportado)', async () => {
+    repositorio.crearSesion.mock.mockImplementation(async ({ estado }) => ({ id: 100, estado }));
+    repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => null);
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'A AA1111AT'), res);
+
+    // Primero crea la sesión "esperando_codigo_registro", después la hace
+    // avanzar directo a "esperando_nombre_registro" con el código ya cargado.
+    assert.equal(repositorio.crearSesion.mock.calls.length, 1);
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 1);
+    const [, campos] = repositorio.actualizarSesion.mock.calls[0].arguments;
+    assert.equal(campos.estado, 'esperando_nombre_registro');
+    assert.equal(campos.codigo_llavero, 'AA1111AT');
+});
+
+test('"E CODIGO" en un solo mensaje (como manda el QR) reporta el encuentro directo', async () => {
+    repositorio.crearSesion.mock.mockImplementation(async ({ estado }) => ({ id: 100, estado }));
+    repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111', nombre_dueno: 'Ale'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'E AA1111AT'), res);
+
+    assert.equal(repositorio.crearSesion.mock.calls.length, 1);
+    assert.equal(repositorio.crearEvento.mock.calls.length, 1);
+    assert.equal(repositorio.crearEvento.mock.calls[0].arguments[0].tipo, 'encuentro');
+});
+
 test('esperando_codigo_registro con código inválido reprompt sin cambiar de estado', async () => {
     repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
         id: 1, telefono: '5491111111', estado: 'esperando_codigo_registro', ultima_interaccion: new Date()
