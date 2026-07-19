@@ -40,8 +40,8 @@ function obtenerLlaverosPorDueno(telefono) {
     return dbRead(supabase.from('llaveros').select('*').eq('telefono_dueno', telefono).eq('activo', true).order('creado_en', { ascending: false }), 'select llaveros (todos por dueño)');
 }
 
-function crearLlavero({ codigo_llavero, alias, telefono_dueno, nombre_dueno, email_alternativo }) {
-    return dbInsertUno(supabase.from('llaveros').insert([{ codigo_llavero, alias, telefono_dueno, nombre_dueno, email_alternativo, activo: true, creado_en: new Date() }]).select(), 'insert llaveros');
+function crearLlavero({ codigo_llavero, alias, telefono_dueno, nombre_dueno, email_alternativo, categoria = 'llavero' }) {
+    return dbInsertUno(supabase.from('llaveros').insert([{ codigo_llavero, alias, telefono_dueno, nombre_dueno, email_alternativo, categoria, activo: true, creado_en: new Date() }]).select(), 'insert llaveros');
 }
 
 function contarLlaverosActivos() {
@@ -54,9 +54,9 @@ function obtenerSesionActiva(telefono) {
     return dbRead(supabase.from('sesiones').select('*').eq('telefono', telefono).is('cancelado_en', null).order('creado_en', { ascending: false }).limit(1).maybeSingle(), 'select sesiones (activa)');
 }
 
-function crearSesion({ telefono, estado, codigo_llavero = null, evento_id = null, sucursal_id = null }) {
+function crearSesion({ telefono, estado, codigo_llavero = null, evento_id = null, sucursal_id = null, categoria = 'llavero' }) {
     return dbInsertUno(supabase.from('sesiones').insert([{
-        telefono, estado, codigo_llavero, evento_id, sucursal_id,
+        telefono, estado, codigo_llavero, evento_id, sucursal_id, categoria,
         intentos_codigo_retiro: 0,
         ultima_interaccion: new Date(),
         creado_en: new Date()
@@ -83,7 +83,7 @@ function purgarSesiones(ids) {
     return dbWrite(supabase.from('sesiones').delete().in('id', ids), 'delete sesiones (purga)');
 }
 
-// ---------- Eventos (cada incidente: alguien encuentra, AXION custodia, se retira) ----------
+// ---------- Eventos (cada incidente: alguien encuentra, YPF custodia, se retira) ----------
 
 function obtenerEventoAbierto(codigoLlavero, tipo) {
     return dbRead(supabase.from('eventos').select('*').eq('codigo_llavero', codigoLlavero).eq('tipo', tipo).neq('estado', 'cerrado').neq('estado', 'retirado').order('creado_en', { ascending: false }).limit(1).maybeSingle(), 'select eventos (abierto)');

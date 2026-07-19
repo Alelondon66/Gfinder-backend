@@ -128,7 +128,7 @@ function renderizarPaginaDashboard(m) {
         </div>
         <div class="card">
             <div class="valor">${m.comportamiento_canales.devoluciones_via_axion_geo}</div>
-            <div class="etiqueta">Devoluciones vía sucursal AXION</div>
+            <div class="etiqueta">Devoluciones vía sucursal YPF</div>
         </div>
         <div class="card">
             <div class="valor">${m.comportamiento_canales.devoluciones_via_chat_directo}</div>

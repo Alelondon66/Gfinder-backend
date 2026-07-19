@@ -83,6 +83,17 @@ app.get('/q/:codigo', limitadorQR, async (req, res) => {
     }
 });
 
+// 🔗 REDIRECCIÓN DEL QR IMPRESO EN CADA CELULAR (MICELU)
+app.get('/celu/:codigo', limitadorQR, async (req, res) => {
+    try {
+        const url = await resolverRedireccionQR(req.params.codigo, 'CELU');
+        return res.redirect(302, url);
+    } catch (error) {
+        console.error('❌ Error redirección QR (MICELU):', error.message);
+        return res.redirect(302, `https://wa.me/${WA_PHONE_NUMBER}`);
+    }
+});
+
 // 📊 ENDPOINT DEL DASHBOARD COMERCIAL (MÉTRICAS GFINDER, formato JSON para integraciones)
 app.get('/api/dashboard/metrics', limitadorDashboard, async (req, res) => {
     const apiKey = req.headers['x-api-key'];

@@ -171,7 +171,7 @@ test('al encontrarse un llavero con una pérdida reportada abierta, esa pérdida
 
     assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
     assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 900);
-    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[1].motivo_cierre, 'llavero_encontrado');
+    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[1].motivo_cierre, 'objeto_encontrado');
 });
 
 test('"P" con dos llaveros activos pregunta cuál perdiste, en vez de asumir el más reciente', async () => {
@@ -375,6 +375,38 @@ test('"E CODIGO" en un solo mensaje (como manda el QR) reporta el encuentro dire
     assert.equal(repositorio.crearSesion.mock.calls.length, 1);
     assert.equal(repositorio.crearEvento.mock.calls.length, 1);
     assert.equal(repositorio.crearEvento.mock.calls[0].arguments[0].tipo, 'encuentro');
+});
+
+test('"ACELU CODIGO" activa el registro de MICELU con el texto de celular', async () => {
+    repositorio.crearSesion.mock.mockImplementation(async ({ estado, categoria }) => ({ id: 100, estado, categoria }));
+    repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => null);
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'ACELU AA1111AT'), res);
+
+    assert.equal(repositorio.crearSesion.mock.calls.length, 1);
+    assert.equal(repositorio.crearSesion.mock.calls[0].arguments[0].categoria, 'celular');
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 1);
+    assert.equal(repositorio.actualizarSesion.mock.calls[0].arguments[1].estado, 'esperando_nombre_registro');
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /¿Cómo es tu nombre\?/);
+});
+
+test('"ECELU CODIGO" encuentra un celular y salta directo a escribirle al dueño (sin D\\/H\\/F)', async () => {
+    repositorio.crearSesion.mock.mockImplementation(async ({ estado, categoria }) => ({ id: 100, estado, categoria }));
+    repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111', nombre_dueno: 'Ale', categoria: 'celular'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'ECELU AA1111AT'), res);
+
+    assert.equal(repositorio.crearEvento.mock.calls.length, 1);
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 1);
+    assert.equal(repositorio.actualizarSesion.mock.calls[0].arguments[1].estado, 'esperando_mensaje_anonimo');
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /Celular localizado/);
+    assert.doesNotMatch(texto, /\*D\.\*/);
 });
 
 test('esperando_codigo_registro con código inválido reprompt sin cambiar de estado', async () => {

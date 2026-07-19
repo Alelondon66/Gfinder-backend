@@ -7,6 +7,23 @@ function nombreParaTemplate(llavero) {
     return llavero.alias || llavero.codigo_llavero;
 }
 
+// Categorías de objeto que conviven en el mismo bot y el mismo número de
+// WhatsApp. Cada una tiene su propio comando de entrada ("A"/"E" para
+// llavero, "ACELU"/"ECELU" para celular) y su propio texto — pero reutilizan
+// el mismo motor de estados por abajo.
+const CATEGORIAS = {
+    llavero: { objeto: 'llavero', prefijo: '' },
+    celular: { objeto: 'celular', prefijo: 'CELU' }
+};
+
+function infoCategoria(categoria) {
+    return CATEGORIAS[categoria] || CATEGORIAS.llavero;
+}
+
+function capitalizar(texto) {
+    return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
 async function buscarNotificacionPendientePorDueno(from) {
     const llaveros = await repo.obtenerLlaverosPorDueno(from);
     if (!llaveros || llaveros.length === 0) return null;
@@ -128,7 +145,7 @@ async function manejarAtajoH(from, mensaje, selector) {
 }
 
 async function mostrarMenu(from) {
-    const menuTexto = `¡Bienvenido a *GFinder AXION*! 🔑🔍\n\nRespondé con la letra:\n\n*A.* Activar nuevo llavero\n*E.* Encontré un llavero\n*R.* Recuperar mi llavero en sucursal\n*P.* Perdí mi llavero\n*C.* Consultas o Reclamos`;
+    const menuTexto = `🔑 *Bienvenido a VUELVE TU LLAVERO*\nEl servicio de recupero de llaves con estaciones YPF\n\nRespondé con la letra:\n\n*A.* Activar nuevo llavero\n*E.* Encontré un llavero\n*R.* Recuperar mi llavero en sucursal\n*P.* Perdí mi llavero\n*C.* Consultas o Reclamos`;
     await enviarMensajeWhatsApp(from, menuTexto);
 }
 
@@ -138,8 +155,9 @@ async function ejecutarReportePerdida(from, llavero) {
         await repo.crearEvento({ llavero_id: llavero.id, codigo_llavero: llavero.codigo_llavero, tipo: 'perdida_reportada', estado: 'abierto' });
     }
 
+    const { objeto } = infoCategoria(llavero.categoria);
     const nombreLlavero = nombreParaTemplate(llavero);
-    await enviarMensajeWhatsApp(from, `🫂 Quedó registrado que tu llavero *${nombreLlavero}* está perdido.\n\nEn cuanto alguien lo encuentre y escanee el código, te vamos a avisar automáticamente por acá.\n\nMientras tanto, quedate tranquilo/a — el sistema está atento. 💙`);
+    await enviarMensajeWhatsApp(from, `🫂 Quedó registrado que tu ${objeto} *${nombreLlavero}* está perdido.\n\nEn cuanto alguien lo encuentre y escanee el código, te vamos a avisar automáticamente por acá.\n\nMientras tanto, quedate tranquilo/a — el sistema está atento. 💙`);
 }
 
 async function reportarPerdida(from) {
@@ -155,24 +173,26 @@ async function reportarPerdida(from) {
     }
 
     await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_perdida_ambiguo' });
-    await enviarMensajeWhatsApp(from, `📋 Tenés más de un llavero activo. ¿Cuál perdiste?\n\n${formatearOpcionesLlavero(llaveros.map(llavero => ({ llavero })))}\n\nRespondé con el número correspondiente.`);
+    await enviarMensajeWhatsApp(from, `📋 Tenés más de un artículo activo. ¿Cuál perdiste?\n\n${formatearOpcionesLlavero(llaveros.map(llavero => ({ llavero })))}\n\nRespondé con el número correspondiente.`);
 }
 
-async function iniciarRegistro(from) {
-    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_registro' });
-    await enviarMensajeWhatsApp(from, "💾 Ingresá el código de 8 caracteres (ej: AA0000AB):");
+async function iniciarRegistro(from, categoria = 'llavero') {
+    const { objeto } = infoCategoria(categoria);
+    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_registro', categoria });
+    await enviarMensajeWhatsApp(from, `💾 Ingresá el código de 8 caracteres de tu ${objeto} (ej: AA0000AB):`);
 }
 
-async function iniciarEncuentro(from) {
-    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_encuentro' });
-    await enviarMensajeWhatsApp(from, "🔍 Ingresá el código de 8 caracteres del llavero encontrado:");
+async function iniciarEncuentro(from, categoria = 'llavero') {
+    const { objeto } = infoCategoria(categoria);
+    await repo.crearSesion({ telefono: from, estado: 'esperando_codigo_encuentro', categoria });
+    await enviarMensajeWhatsApp(from, `🔍 Ingresá el código de 8 caracteres del ${objeto} encontrado:`);
 }
 
-// Soporta "A CODIGO" / "E CODIGO" como un solo mensaje (lo que manda el QR
-// impreso en el llavero) en vez de forzar dos mensajes separados: crea la
-// sesión y procesa el código en el mismo turno.
-async function iniciarConCodigoInline(from, estadoInicial, codigo) {
-    const sesion = await repo.crearSesion({ telefono: from, estado: estadoInicial });
+// Soporta "A CODIGO" / "E CODIGO" (y sus equivalentes "ACELU"/"ECELU") como
+// un solo mensaje (lo que manda el QR impreso) en vez de forzar dos mensajes
+// separados: crea la sesión y procesa el código en el mismo turno.
+async function iniciarConCodigoInline(from, estadoInicial, codigo, categoria = 'llavero') {
+    const sesion = await repo.crearSesion({ telefono: from, estado: estadoInicial, categoria });
     await manejarEstadoSesion(from, sesion, codigo, codigo.toUpperCase());
 }
 
@@ -205,9 +225,9 @@ async function iniciarSoporte(from) {
     await enviarMensajeWhatsApp(from, "🩺 *Consultas y Reclamos*\n\nEscribí tu consulta detallada en un solo mensaje:");
 }
 
-async function iniciarPersonalAxion(from) {
+async function iniciarPersonalEstacion(from) {
     await repo.crearSesion({ telefono: from, estado: 'esperando_sucursal_personal' });
-    await enviarMensajeWhatsApp(from, "⛽ *Personal AXION*\n\nIngresá el número de sucursal (4 dígitos):");
+    await enviarMensajeWhatsApp(from, "⛽ *Personal YPF*\n\nIngresá el número de sucursal (4 dígitos):");
 }
 
 async function manejarUbicacion(from, sesion, messageData) {
@@ -218,7 +238,7 @@ async function manejarUbicacion(from, sesion, messageData) {
     let textoSucursal = "";
 
     if (!sucursales || sucursales.length === 0) {
-        textoSucursal = "📍 Acércalo a cualquier estación AXION.";
+        textoSucursal = "📍 Acércalo a cualquier estación YPF.";
     } else {
         let sucursalMasCercana = null;
         let distanciaMinima = Infinity;
@@ -234,8 +254,8 @@ async function manejarUbicacion(from, sesion, messageData) {
         });
 
         textoSucursal = sucursalMasCercana
-            ? `📍 *Estación AXION más cercana:*\n\n🏠 ${sucursalMasCercana.direccion}\n🏁 A aprox. ${distanciaMinima.toFixed(1)} km.`
-            : `📍 *Estación AXION:*\n\n🏠 ${sucursales[0].direccion}`;
+            ? `📍 *Estación YPF más cercana:*\n\n🏠 ${sucursalMasCercana.direccion}\n🏁 A aprox. ${distanciaMinima.toFixed(1)} km.`
+            : `📍 *Estación YPF:*\n\n🏠 ${sucursales[0].direccion}`;
     }
 
     const resolucionUbicacion = `${textoSucursal}\n\n💬 _¿Querés dejarle un mensaje seguro al dueño antes de ir?_\n\n*H.* Enviar mensaje\n*F.* Finalizar / Lo estoy llevando`;
@@ -262,8 +282,9 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
         }
 
         case 'esperando_nombre_registro': {
+            const { objeto } = infoCategoria(sesion.categoria);
             await repo.actualizarSesion(sesion.id, { nombre_borrador: text, estado: 'esperando_alias_registro' });
-            await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. ¿Querés ponerle un alias a este llavero para reconocerlo fácil (ej: "Auto de Juan")? Si no, respondé *OMITIR*:`);
+            await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. ¿Querés ponerle un alias a este ${objeto} para reconocerlo fácil (ej: "Auto de Juan")? Si no, respondé *OMITIR*:`);
             return;
         }
 
@@ -281,7 +302,8 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 return;
             }
             await repo.actualizarSesion(sesion.id, { email_borrador: emailLimpio, estado: 'esperando_confirmacion_alta' });
-            const mensajeConfirmacion = `📝 *${sesion.nombre_borrador || 'Usuario'}*, vamos a activar el llavero *${sesion.codigo_llavero}*${sesion.alias_borrador ? ` ("${sesion.alias_borrador}")` : ''} y tu email alternativo es *${emailLimpio}*.\n\nAquí te dejamos un acceso a las condiciones generales del servicio Vuelve: https://vuelve.com/terminos\n\nSi estás de acuerdo, respondé con el número *1*.\nEn caso contrario marcá *2*`;
+            const { objeto: objetoConfirmacion } = infoCategoria(sesion.categoria);
+            const mensajeConfirmacion = `📝 *${sesion.nombre_borrador || 'Usuario'}*, vamos a activar el ${objetoConfirmacion} *${sesion.codigo_llavero}*${sesion.alias_borrador ? ` ("${sesion.alias_borrador}")` : ''} y tu email alternativo es *${emailLimpio}*.\n\nAquí te dejamos un acceso a las condiciones generales del servicio Vuelve: https://vuelve.com/terminos\n\nSi estás de acuerdo, respondé con el número *1*.\nEn caso contrario marcá *2*`;
             await enviarMensajeWhatsApp(from, mensajeConfirmacion);
             return;
         }
@@ -293,10 +315,12 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                     alias: sesion.alias_borrador,
                     telefono_dueno: from,
                     nombre_dueno: sesion.nombre_borrador,
-                    email_alternativo: sesion.email_borrador
+                    email_alternativo: sesion.email_borrador,
+                    categoria: sesion.categoria
                 });
                 await repo.cerrarSesion(sesion.id);
-                await enviarMensajeWhatsApp(from, "🎉 ¡Llavero activado con éxito!");
+                const { objeto: objetoActivado } = infoCategoria(sesion.categoria);
+                await enviarMensajeWhatsApp(from, `🎉 ¡${capitalizar(objetoActivado)} activado con éxito!`);
             } else if (textUpper === '2') {
                 await repo.cancelarSesion(sesion.id, 'usuario_rechazo_confirmacion');
                 await enviarMensajeWhatsApp(from, "🔄 Registro cancelado correctamente. Escribí *Hola* si querés volver a empezar.");
@@ -307,13 +331,14 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
         }
 
         case 'esperando_codigo_encuentro': {
+            const { objeto: objetoEncuentro } = infoCategoria(sesion.categoria);
             if (!validarCodigoGFinder(textUpper)) {
                 await enviarMensajeWhatsApp(from, "❌ Código inválido. Intentá de nuevo:");
                 return;
             }
             const llavero = await repo.obtenerLlaveroPorCodigo(textUpper);
             if (!llavero) {
-                await enviarMensajeWhatsApp(from, "⚠️ El código no corresponde a un llavero activo.");
+                await enviarMensajeWhatsApp(from, `⚠️ El código no corresponde a un ${objetoEncuentro} activo.`);
                 return;
             }
 
@@ -334,24 +359,31 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 });
 
                 const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
-                const alertaInmediata = `🚨 *GFinder:* Hola${nombrePropietario}, ingresaron el código de tu llavero *${nombreParaTemplate(llavero)}*. Te avisaremos apenas definan la entrega.`;
+                const alertaInmediata = `🚨 *VUELVE:* Hola${nombrePropietario}, ingresaron el código de tu ${objetoEncuentro} *${nombreParaTemplate(llavero)}*. Te avisaremos apenas definan la entrega.`;
                 await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), alertaInmediata);
             }
 
             const perdidaAbierta = await repo.obtenerEventoAbierto(textUpper, 'perdida_reportada');
             if (perdidaAbierta) {
-                await repo.cerrarEvento(perdidaAbierta.id, { motivo_cierre: 'llavero_encontrado' });
+                await repo.cerrarEvento(perdidaAbierta.id, { motivo_cierre: 'objeto_encontrado' });
             }
 
-            await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_subopcion_encuentro' });
-            await enviarMensajeWhatsApp(from, `✅ ¡Llavero localizado!\n\nSeleccioná:\n*D.* Ver dónde devolverlo\n*H.* Hablar seguro con el dueño`);
+            if (sesion.categoria === 'celular') {
+                // MICELU no tiene entrega en sucursal: se salta el submenú
+                // D/H/F y va directo a escribirle al dueño.
+                await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_mensaje_anonimo' });
+                await enviarMensajeWhatsApp(from, `✅ ¡${capitalizar(objetoEncuentro)} localizado! Le avisamos al dueño.\n\n📝 Escribí el mensaje para coordinar cómo devolverlo:`);
+            } else {
+                await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_subopcion_encuentro' });
+                await enviarMensajeWhatsApp(from, `✅ ¡Llavero localizado!\n\nSeleccioná:\n*D.* Ver dónde devolverlo\n*H.* Hablar seguro con el dueño`);
+            }
             return;
         }
 
         case 'esperando_subopcion_encuentro': {
             if (textUpper === 'D') {
                 await repo.actualizarSesion(sesion.id, { estado: 'esperando_ubicacion_finder' });
-                await enviarMensajeWhatsApp(from, "📍 Compartinos tu ubicación (Clip ➡️ Ubicación) para indicarte la sucursal AXION más cercana:");
+                await enviarMensajeWhatsApp(from, "📍 Compartinos tu ubicación (Clip ➡️ Ubicación) para indicarte la sucursal YPF más cercana:");
             } else if (textUpper === 'H') {
                 await repo.actualizarSesion(sesion.id, { estado: 'esperando_mensaje_anonimo' });
                 await enviarMensajeWhatsApp(from, "📝 Escribí el mensaje para el dueño:");
@@ -519,7 +551,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
             const direccionEstacion = (filasSucursal && filasSucursal.length > 0) ? filasSucursal[0].direccion : `Sucursal N° ${sesion.sucursal_id}`;
             const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
 
-            const mensajeDueño = `🚨 *GFinder AXION!*\n\nHola${nombrePropietario}, tu llavero *${nombreParaTemplate(llavero)}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}\n\n✅ ¡Ya podés ir a buscarlo! Al llegar a la sucursal, escribí *R* para retirarlo.`;
+            const mensajeDueño = `🚨 *VUELVE - YPF*\n\nHola${nombrePropietario}, tu llavero *${nombreParaTemplate(llavero)}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}\n\n✅ ¡Ya podés ir a buscarlo! Al llegar a la sucursal, escribí *R* para retirarlo.`;
             await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), mensajeDueño);
             return;
         }
@@ -628,10 +660,18 @@ async function procesarMensajeWebhook(req, res) {
                 await iniciarRegistro(from);
             } else if (/^A\s+[A-Za-z0-9]{8}$/i.test(text)) {
                 await iniciarConCodigoInline(from, 'esperando_codigo_registro', text.split(/\s+/)[1]);
+            } else if (textUpper === 'ACELU') {
+                await iniciarRegistro(from, 'celular');
+            } else if (/^ACELU\s+[A-Za-z0-9]{8}$/i.test(text)) {
+                await iniciarConCodigoInline(from, 'esperando_codigo_registro', text.split(/\s+/)[1], 'celular');
             } else if (textUpper === 'E') {
                 await iniciarEncuentro(from);
             } else if (/^E\s+[A-Za-z0-9]{8}$/i.test(text)) {
                 await iniciarConCodigoInline(from, 'esperando_codigo_encuentro', text.split(/\s+/)[1]);
+            } else if (textUpper === 'ECELU') {
+                await iniciarEncuentro(from, 'celular');
+            } else if (/^ECELU\s+[A-Za-z0-9]{8}$/i.test(text)) {
+                await iniciarConCodigoInline(from, 'esperando_codigo_encuentro', text.split(/\s+/)[1], 'celular');
             } else if (textUpper === 'R') {
                 await iniciarRecupero(from);
             } else if (textUpper === 'P') {
@@ -639,7 +679,7 @@ async function procesarMensajeWebhook(req, res) {
             } else if (textUpper === 'C') {
                 await iniciarSoporte(from);
             } else if (textUpper === '9') {
-                await iniciarPersonalAxion(from);
+                await iniciarPersonalEstacion(from);
             } else if (/^(gracias|graci?as|muchas gracias|muy amable|ok|okay|dale|listo|genial|perfecto|joya|voy|ya voy|👍|🙏)[\s!.]*$/i.test(textUpper)) {
                 await enviarMensajeWhatsApp(from, "🙌 ¡De nada! Cualquier cosa, escribí *Hola* para ver el menú.");
             } else {

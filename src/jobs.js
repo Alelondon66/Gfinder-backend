@@ -47,7 +47,7 @@ async function enviarResumenYPurgarCancelados() {
     }
 }
 
-// Corre una vez al día. Mientras un llavero esté en custodia AXION sin
+// Corre una vez al día. Mientras un llavero esté en custodia YPF sin
 // retirar, manda un recordatorio (WhatsApp + email) los primeros 2 días.
 // Al 3er chequeo sin retiro, avisa a administración para que un operador
 // llame directamente, y deja de insistir solo.
