@@ -12,8 +12,8 @@ function nombreParaTemplate(llavero) {
 // llavero, "ACELU"/"ECELU" para celular) y su propio texto — pero reutilizan
 // el mismo motor de estados por abajo.
 const CATEGORIAS = {
-    llavero: { objeto: 'llavero', prefijo: '', ejemploAlias: 'Auto de Juan' },
-    celular: { objeto: 'celular', prefijo: 'CELU', ejemploAlias: 'Celular de Juan' }
+    llavero: { objeto: 'llavero', prefijo: '', ejemploAlias: 'Auto de Juan', fraseEntrega: 'Te avisaremos apenas definan la entrega.' },
+    celular: { objeto: 'celular', prefijo: 'CELU', ejemploAlias: 'Celular de Juan', fraseEntrega: 'Ya te va a escribir para coordinar la devolución.' }
 };
 
 function infoCategoria(categoria) {
@@ -362,16 +362,23 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
         }
 
         case 'esperando_codigo_encuentro': {
-            const { objeto: objetoEncuentro } = infoCategoria(sesion.categoria);
+            const { objeto: objetoTentativo } = infoCategoria(sesion.categoria);
             if (!validarCodigoGFinder(textUpper)) {
                 await enviarMensajeWhatsApp(from, "❌ Código inválido. Intentá de nuevo:");
                 return;
             }
             const llavero = await repo.obtenerLlaveroPorCodigo(textUpper);
             if (!llavero) {
-                await enviarMensajeWhatsApp(from, `⚠️ El código no corresponde a un ${objetoEncuentro} activo.`);
+                await enviarMensajeWhatsApp(from, `⚠️ El código no corresponde a un ${objetoTentativo} activo.`);
                 return;
             }
+
+            // La categoría real es la del objeto encontrado (guardada en la
+            // base), no la que el finder haya tipeado con E/ECELU -- si
+            // escribió "E" en vez de "ECELU" para un celular, el aviso y el
+            // flujo tienen que coincidir con el objeto real, no con el
+            // comando que usó por error.
+            const { objeto: objetoEncuentro, fraseEntrega } = infoCategoria(llavero.categoria);
 
             // Si ya había una conversación "encuentro" abierta para este código
             // (ej. el mismo finder reingresó el código de nuevo), la reutilizamos
@@ -390,7 +397,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 });
 
                 const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
-                const alertaInmediata = `🚨 *VUELVE:* Hola${nombrePropietario}, ingresaron el código de tu ${objetoEncuentro} *${nombreParaTemplate(llavero)}*. Te avisaremos apenas definan la entrega.`;
+                const alertaInmediata = `🚨 *VUELVE:* Hola${nombrePropietario}, ingresaron el código de tu ${objetoEncuentro} *${nombreParaTemplate(llavero)}*. ${fraseEntrega}`;
                 await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, objetoEncuentro, nombreParaTemplate(llavero), alertaInmediata);
             }
 
@@ -399,7 +406,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 await repo.cerrarEvento(perdidaAbierta.id, { motivo_cierre: 'objeto_encontrado' });
             }
 
-            if (sesion.categoria === 'celular') {
+            if (llavero.categoria === 'celular') {
                 // MICELU no tiene entrega en sucursal: se salta el submenú
                 // D/H/F y va directo a escribirle al dueño.
                 await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_mensaje_anonimo' });

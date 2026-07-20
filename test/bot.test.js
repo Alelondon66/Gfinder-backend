@@ -409,6 +409,26 @@ test('"ECELU CODIGO" encuentra un celular y salta directo a escribirle al dueño
     assert.doesNotMatch(texto, /\*D\.\*/);
 });
 
+test('"E CODIGO" (sin CELU) sobre un objeto que en realidad es celular igual usa la categoría real, no la del comando (bug reportado)', async () => {
+    repositorio.crearSesion.mock.mockImplementation(async ({ estado, categoria }) => ({ id: 100, estado, categoria }));
+    repositorio.obtenerLlaveroPorCodigo.mock.mockImplementation(async () => ({
+        id: 5, codigo_llavero: 'AA1111AT', alias: 'Celu de Gabi', telefono_dueno: '5491111111', nombre_dueno: 'Gabi', categoria: 'celular'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'E AA1111AT'), res);
+
+    // Salta directo a escribir el mensaje (nada de D/H/F), como corresponde a un celular.
+    assert.equal(repositorio.actualizarSesion.mock.calls[0].arguments[1].estado, 'esperando_mensaje_anonimo');
+    const [, textoFinder] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(textoFinder, /Celular localizado/);
+
+    // La plantilla al dueño también debe decir "celular", no "llavero".
+    assert.equal(notificaciones.registrarNotificacionPendienteEvento.mock.calls.length, 1);
+    const [, , objetoPlantilla] = notificaciones.registrarNotificacionPendienteEvento.mock.calls[0].arguments;
+    assert.equal(objetoPlantilla, 'celular');
+});
+
 test('esperando_codigo_registro con código inválido reprompt sin cambiar de estado', async () => {
     repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
         id: 1, telefono: '5491111111', estado: 'esperando_codigo_registro', ultima_interaccion: new Date()
