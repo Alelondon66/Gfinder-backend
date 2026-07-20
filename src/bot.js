@@ -122,10 +122,18 @@ async function manejarAtajoF(from, selector) {
 
     if (!elegido.destinatario) return false;
 
-    const quienCerro = elegido.rolPropio === 'dueño' ? 'el dueño' : 'quien encontró tu llavero';
-    await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: `${elegido.rolPropio}_cerro_chat` });
-    await enviarMensajeWhatsApp(elegido.destinatario, `🔒 *Chat finalizado por ${quienCerro}.*`);
-    await enviarMensajeWhatsApp(from, "🔒 *Chat cerrado.*");
+    const { objeto } = infoCategoria(elegido.categoria);
+    if (elegido.rolPropio === 'dueño') {
+        // Si quien cierra es el dueño, entendemos que ya recuperó el objeto
+        // (no es solo "cortar la charla") y lo dejamos registrado así.
+        await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: 'dueño_confirmo_recuperacion' });
+        await enviarMensajeWhatsApp(elegido.destinatario, `🎉 *El dueño confirmó que recuperó su ${objeto}.* ¡Gracias por tu ayuda, hiciste la diferencia!`);
+        await enviarMensajeWhatsApp(from, `🎉 ¡Genial! Marcamos tu ${objeto} como recuperado. Gracias por confiar en VUELVE.`);
+    } else {
+        await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: 'finder_cerro_chat' });
+        await enviarMensajeWhatsApp(elegido.destinatario, `🔒 *Quien encontró tu ${objeto} finalizó la conversación.*`);
+        await enviarMensajeWhatsApp(from, "🔒 *Chat cerrado.*");
+    }
     return true;
 }
 
@@ -411,7 +419,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
                 // MICELU no tiene entrega en sucursal: se salta el submenú
                 // D/H/F y va directo a escribirle al dueño.
                 await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_mensaje_anonimo' });
-                await enviarMensajeWhatsApp(from, `✅ ¡${capitalizar(objetoEncuentro)} localizado! Le avisamos al dueño.\n\n📝 Escribí el mensaje para coordinar cómo devolverlo:`);
+                await enviarMensajeWhatsApp(from, `🙌 ¡Gracias por ayudarnos a devolver este ${objetoEncuentro}! Hagamos la diferencia.\n\n📝 Escribile un mensaje al dueño para coordinar la entrega:`);
             } else {
                 await repo.actualizarSesion(sesion.id, { codigo_llavero: textUpper, evento_id: evento.id, estado: 'esperando_subopcion_encuentro' });
                 await enviarMensajeWhatsApp(from, `✅ ¡Llavero localizado!\n\nSeleccioná:\n*D.* Ver dónde devolverlo\n*H.* Hablar seguro con el dueño`);

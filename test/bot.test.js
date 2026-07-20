@@ -405,7 +405,7 @@ test('"ECELU CODIGO" encuentra un celular y salta directo a escribirle al dueño
     assert.equal(repositorio.actualizarSesion.mock.calls.length, 1);
     assert.equal(repositorio.actualizarSesion.mock.calls[0].arguments[1].estado, 'esperando_mensaje_anonimo');
     const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
-    assert.match(texto, /Celular localizado/);
+    assert.match(texto, /Gracias por ayudarnos/);
     assert.doesNotMatch(texto, /\*D\.\*/);
 });
 
@@ -421,7 +421,7 @@ test('"E CODIGO" (sin CELU) sobre un objeto que en realidad es celular igual usa
     // Salta directo a escribir el mensaje (nada de D/H/F), como corresponde a un celular.
     assert.equal(repositorio.actualizarSesion.mock.calls[0].arguments[1].estado, 'esperando_mensaje_anonimo');
     const [, textoFinder] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
-    assert.match(textoFinder, /Celular localizado/);
+    assert.match(textoFinder, /Gracias por ayudarnos/);
 
     // La plantilla al dueño también debe decir "celular", no "llavero".
     assert.equal(notificaciones.registrarNotificacionPendienteEvento.mock.calls.length, 1);
@@ -635,7 +635,12 @@ test('atajo "F" del dueño cierra el evento abierto y avisa a ambas partes', asy
 
     assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
     assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
+    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[1].motivo_cierre, 'dueño_confirmo_recuperacion');
     assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
+    const [, textoParaFinder] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(textoParaFinder, /recuperó/);
+    const [, textoParaDueño] = notificaciones.enviarMensajeWhatsApp.mock.calls[1].arguments;
+    assert.match(textoParaDueño, /recuperado/);
 });
 
 test('"H mensaje" del dueño llega al finder aunque haya un backlog de notificaciones pendientes sin revelar (bug reportado)', async () => {
