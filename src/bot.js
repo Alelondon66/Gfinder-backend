@@ -59,8 +59,15 @@ function formatearOpcionesLlavero(items) {
     return items.map(({ llavero }, i) => `*${i + 1}.* ${nombreParaTemplate(llavero)}`).join('\n');
 }
 
+// Si hay conversaciones de más de una categoría (llavero, celular, ...)
+// mezcladas en la misma lista, mostramos a qué producto pertenece cada una
+// para que no se confundan entre sí.
 function formatearOpcionesConversacion(items) {
-    return items.map((c, i) => `*${i + 1}.* ${c.nombre}`).join('\n');
+    const hayVariasCategorias = new Set(items.map(c => c.categoria)).size > 1;
+    return items.map((c, i) => {
+        const etiqueta = hayVariasCategorias ? ` _(${infoCategoria(c.categoria).objeto})_` : '';
+        return `*${i + 1}.* ${c.nombre}${etiqueta}`;
+    }).join('\n');
 }
 
 // Permite elegir una opción de una lista ambigua por número de posición
@@ -84,14 +91,14 @@ async function buscarConversacionesAbiertas(from, tipo) {
 
     const { coincidencias: comoDueño } = await buscarEventosAbiertosDelDueno(from, tipo);
     for (const { llavero, evento } of comoDueño) {
-        conversaciones.push({ codigo: llavero.codigo_llavero, nombre: nombreParaTemplate(llavero), evento, destinatario: evento.telefono_finder, rolPropio: 'dueño' });
+        conversaciones.push({ codigo: llavero.codigo_llavero, nombre: nombreParaTemplate(llavero), categoria: llavero.categoria, evento, destinatario: evento.telefono_finder, rolPropio: 'dueño' });
     }
 
     const eventosComoFinder = await repo.obtenerEventosAbiertosPorFinder(from, tipo);
     for (const evento of (eventosComoFinder || [])) {
         const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (atajo del finder)');
         if (llavero) {
-            conversaciones.push({ codigo: llavero.codigo_llavero, nombre: nombreParaTemplate(llavero), evento, destinatario: llavero.telefono_dueno, rolPropio: 'finder' });
+            conversaciones.push({ codigo: llavero.codigo_llavero, nombre: nombreParaTemplate(llavero), categoria: llavero.categoria, evento, destinatario: llavero.telefono_dueno, rolPropio: 'finder' });
         }
     }
 
@@ -360,7 +367,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
 
                 const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
                 const alertaInmediata = `🚨 *VUELVE:* Hola${nombrePropietario}, ingresaron el código de tu ${objetoEncuentro} *${nombreParaTemplate(llavero)}*. Te avisaremos apenas definan la entrega.`;
-                await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), alertaInmediata);
+                await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, objetoEncuentro, nombreParaTemplate(llavero), alertaInmediata);
             }
 
             const perdidaAbierta = await repo.obtenerEventoAbierto(textUpper, 'perdida_reportada');
@@ -552,7 +559,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
             const nombrePropietario = llavero.nombre_dueno ? ` *${llavero.nombre_dueno}*` : "";
 
             const mensajeDueño = `🚨 *VUELVE - YPF*\n\nHola${nombrePropietario}, tu llavero *${nombreParaTemplate(llavero)}* está en la sucursal:\n\n📍 ${direccionEstacion}\n🔑 *Código de Retiro:* ${codigoRetiro}\n\n✅ ¡Ya podés ir a buscarlo! Al llegar a la sucursal, escribí *R* para retirarlo.`;
-            await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, nombreParaTemplate(llavero), mensajeDueño);
+            await registrarNotificacionPendienteEvento(evento.id, llavero.telefono_dueno, 'llavero', nombreParaTemplate(llavero), mensajeDueño);
             return;
         }
 

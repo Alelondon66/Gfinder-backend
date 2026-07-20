@@ -45,7 +45,7 @@ async function enviarMensajeWhatsApp(telefonoDestino, textoEnviar) {
     }
 }
 
-async function enviarPlantillaWhatsApp(telefonoDestino, textoParametro) {
+async function enviarPlantillaWhatsApp(telefonoDestino, objeto, textoParametro) {
     const url = `https://graph.facebook.com/v25.0/${process.env.WA_PHONE_NUMBER_ID}/messages`;
     const payload = {
         messaging_product: "whatsapp",
@@ -56,7 +56,7 @@ async function enviarPlantillaWhatsApp(telefonoDestino, textoParametro) {
             language: { code: WA_TEMPLATE_LANG },
             components: [{
                 type: "body",
-                parameters: [{ type: "text", text: textoParametro }]
+                parameters: [{ type: "text", text: objeto }, { type: "text", text: textoParametro }]
             }]
         }
     };
@@ -107,8 +107,8 @@ async function enviarEmailAlternativo(destinatario, asunto, cuerpo) {
 
 // Manda la plantilla aprobada (abre la ventana de 24hs) y deja guardado el detalle
 // que se le va a revelar al dueño en texto libre recién cuando responda.
-async function registrarNotificacionPendienteEvento(eventoId, telefonoDueno, textoParametroPlantilla, detalleTexto) {
-    await enviarPlantillaWhatsApp(telefonoDueno, textoParametroPlantilla);
+async function registrarNotificacionPendienteEvento(eventoId, telefonoDueno, objeto, textoParametroPlantilla, detalleTexto) {
+    await enviarPlantillaWhatsApp(telefonoDueno, objeto, textoParametroPlantilla);
     await repositorio.actualizarEvento(eventoId, {
         notificacion_pendiente: detalleTexto,
         notificacion_enviada_en: new Date()
