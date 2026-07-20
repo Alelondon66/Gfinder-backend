@@ -278,7 +278,8 @@ async function enviarMensajeAnonimoYCerrar(from, sesion, mensajeTexto) {
     if (evento) {
         const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (mensaje anonimo)');
         if (llavero) {
-            const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu llavero, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${mensajeTexto}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🔒 Para terminar esta conversación, escribí *F*.`;
+            const { objeto: objetoMensaje } = infoCategoria(llavero.categoria);
+            const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu ${objetoMensaje}, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${mensajeTexto}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🔒 Para terminar esta conversación, escribí *F*.`;
             if (evento.notificacion_pendiente) {
                 await repo.actualizarEvento(evento.id, { notificacion_pendiente: mensajeAlDueño });
             } else {
