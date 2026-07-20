@@ -453,6 +453,34 @@ test('esperando_codigo_registro con código libre avanza a pedir nombre', async 
     assert.equal(campos.codigo_llavero, 'AA1111AT');
 });
 
+test('esperando_alias_registro rechaza un alias vacío y no avanza', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5491111111', estado: 'esperando_alias_registro', ultima_interaccion: new Date()
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', '   '), res);
+
+    // Solo el "touch" de ultima_interaccion, sin cambio de estado.
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 1);
+    const [, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.match(texto, /no puede estar vacío/);
+});
+
+test('esperando_alias_registro con texto avanza a pedir el email', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5491111111', estado: 'esperando_alias_registro', ultima_interaccion: new Date()
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'Celular de mamá'), res);
+
+    assert.equal(repositorio.actualizarSesion.mock.calls.length, 2);
+    const [, campos] = repositorio.actualizarSesion.mock.calls[1].arguments;
+    assert.equal(campos.estado, 'esperando_email_alternativo');
+    assert.equal(campos.alias_borrador, 'Celular de mamá');
+});
+
 test('confirmación "1" crea el llavero con el alias cargado y cierra la sesión', async () => {
     repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
         id: 1, telefono: '5491111111', estado: 'esperando_confirmacion_alta',

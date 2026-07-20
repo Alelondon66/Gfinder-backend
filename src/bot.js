@@ -12,8 +12,8 @@ function nombreParaTemplate(llavero) {
 // llavero, "ACELU"/"ECELU" para celular) y su propio texto — pero reutilizan
 // el mismo motor de estados por abajo.
 const CATEGORIAS = {
-    llavero: { objeto: 'llavero', prefijo: '' },
-    celular: { objeto: 'celular', prefijo: 'CELU' }
+    llavero: { objeto: 'llavero', prefijo: '', ejemploAlias: 'Auto de Juan' },
+    celular: { objeto: 'celular', prefijo: 'CELU', ejemploAlias: 'Celular de Juan' }
 };
 
 function infoCategoria(categoria) {
@@ -309,15 +309,19 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
         }
 
         case 'esperando_nombre_registro': {
-            const { objeto } = infoCategoria(sesion.categoria);
+            const { objeto, ejemploAlias } = infoCategoria(sesion.categoria);
             await repo.actualizarSesion(sesion.id, { nombre_borrador: text, estado: 'esperando_alias_registro' });
-            await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. ¿Querés ponerle un alias a este ${objeto} para reconocerlo fácil (ej: "Auto de Juan")? Si no, respondé *OMITIR*:`);
+            await enviarMensajeWhatsApp(from, `🤝 Gracias ${text}. Ponele un alias a este ${objeto} para reconocerlo fácil si tenés más de uno (ej: "${ejemploAlias}"):`);
             return;
         }
 
         case 'esperando_alias_registro': {
-            const alias = textUpper === 'OMITIR' ? null : text;
-            await repo.actualizarSesion(sesion.id, { alias_borrador: alias, estado: 'esperando_email_alternativo' });
+            if (!text.trim()) {
+                const { ejemploAlias } = infoCategoria(sesion.categoria);
+                await enviarMensajeWhatsApp(from, `❌ El alias no puede estar vacío. Escribí uno (ej: "${ejemploAlias}"):`);
+                return;
+            }
+            await repo.actualizarSesion(sesion.id, { alias_borrador: text, estado: 'esperando_email_alternativo' });
             await enviarMensajeWhatsApp(from, "📧 Ingresá un email de contacto alternativo (por si no podemos comunicarnos con vos por WhatsApp):");
             return;
         }
