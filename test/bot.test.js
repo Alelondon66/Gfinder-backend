@@ -622,7 +622,7 @@ test('el finder puede cerrar la conversación con "F"', async () => {
     assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
 });
 
-test('atajo "F" del dueño cierra el evento abierto y avisa a ambas partes', async () => {
+test('atajo "F" del dueño solo cierra el chat (no implica recuperación)', async () => {
     repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
         { id: 5, codigo_llavero: 'AA1111AT', telefono_dueno: '5491111111' }
     ]);
@@ -635,12 +635,40 @@ test('atajo "F" del dueño cierra el evento abierto y avisa a ambas partes', asy
 
     assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
     assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
+    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[1].motivo_cierre, 'dueño_cerro_chat');
+    assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
+});
+
+test('atajo "RECUPERADO" del dueño confirma la recuperación y avisa a ambas partes (distinto de F)', async () => {
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => [
+        { id: 5, codigo_llavero: 'AA1111AT', categoria: 'celular', telefono_dueno: '5491111111' }
+    ]);
+    repositorio.obtenerEventoAbierto.mock.mockImplementation(async () => ({
+        id: 300, telefono_finder: '5492222222'
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5491111111', 'RECUPERADO'), res);
+
+    assert.equal(repositorio.cerrarEvento.mock.calls.length, 1);
+    assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[0], 300);
     assert.equal(repositorio.cerrarEvento.mock.calls[0].arguments[1].motivo_cierre, 'dueño_confirmo_recuperacion');
     assert.equal(notificaciones.enviarMensajeWhatsApp.mock.calls.length, 2);
     const [, textoParaFinder] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
     assert.match(textoParaFinder, /recuperó/);
     const [, textoParaDueño] = notificaciones.enviarMensajeWhatsApp.mock.calls[1].arguments;
     assert.match(textoParaDueño, /recuperado/);
+});
+
+test('"F" del finder no debe ser confundido con "RECUPERADO" (solo el dueño puede confirmarlo)', async () => {
+    repositorio.obtenerLlaverosPorDueno.mock.mockImplementation(async () => []);
+    repositorio.obtenerEventosAbiertosPorFinder.mock.mockImplementation(async () => []);
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'RECUPERADO'), res);
+
+    // El finder no tiene llaveros propios ni conversaciones como dueño -> no hay nada que cerrar.
+    assert.equal(repositorio.cerrarEvento.mock.calls.length, 0);
 });
 
 test('"H mensaje" del dueño llega al finder aunque haya un backlog de notificaciones pendientes sin revelar (bug reportado)', async () => {

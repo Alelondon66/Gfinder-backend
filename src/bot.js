@@ -122,18 +122,43 @@ async function manejarAtajoF(from, selector) {
 
     if (!elegido.destinatario) return false;
 
+    // Cerrar el chat NO significa que el objeto se haya recuperado -- solo
+    // que dejan de conversar. La confirmación real de recuperación es un
+    // paso aparte (atajo RECUPERADO, solo para el dueño), igual que en
+    // llavero la confirmación real pasa por R en sucursal, no por F.
     const { objeto } = infoCategoria(elegido.categoria);
-    if (elegido.rolPropio === 'dueño') {
-        // Si quien cierra es el dueño, entendemos que ya recuperó el objeto
-        // (no es solo "cortar la charla") y lo dejamos registrado así.
-        await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: 'dueño_confirmo_recuperacion' });
-        await enviarMensajeWhatsApp(elegido.destinatario, `🎉 *El dueño confirmó que recuperó su ${objeto}.* ¡Gracias por tu ayuda, hiciste la diferencia!`);
-        await enviarMensajeWhatsApp(from, `🎉 ¡Genial! Marcamos tu ${objeto} como recuperado. Gracias por confiar en VUELVE.`);
+    const quienCerro = elegido.rolPropio === 'dueño' ? 'el dueño' : `quien encontró tu ${objeto}`;
+    await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: `${elegido.rolPropio}_cerro_chat` });
+    await enviarMensajeWhatsApp(elegido.destinatario, `🔒 *Chat finalizado por ${quienCerro}.*`);
+    await enviarMensajeWhatsApp(from, "🔒 *Chat cerrado.*");
+    return true;
+}
+
+// A diferencia de F (que solo corta la conversación), esto confirma que el
+// dueño efectivamente recuperó su objeto -- por eso solo mira conversaciones
+// donde "from" es el dueño (buscarEventosAbiertosDelDueno), nunca del lado
+// del finder: solo el dueño puede confirmar que lo recuperó.
+async function manejarAtajoRecuperado(from, selector) {
+    const { coincidencias } = await buscarEventosAbiertosDelDueno(from, 'encuentro');
+    if (coincidencias.length === 0) return false;
+
+    let elegido;
+    if (selector) {
+        elegido = elegirPorSelector(coincidencias, selector, c => c.llavero.codigo_llavero);
+        if (!elegido) return false;
+    } else if (coincidencias.length === 1) {
+        elegido = coincidencias[0];
     } else {
-        await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: 'finder_cerro_chat' });
-        await enviarMensajeWhatsApp(elegido.destinatario, `🔒 *Quien encontró tu ${objeto} finalizó la conversación.*`);
-        await enviarMensajeWhatsApp(from, "🔒 *Chat cerrado.*");
+        await enviarMensajeWhatsApp(from, `📋 Tenés más de un objeto con conversación abierta:\n\n${formatearOpcionesLlavero(coincidencias)}\n\nRespondé con el número del que recuperaste, por ejemplo: *RECUPERADO 1*`);
+        return true;
     }
+
+    const { objeto } = infoCategoria(elegido.llavero.categoria);
+    await repo.cerrarEvento(elegido.evento.id, { motivo_cierre: 'dueño_confirmo_recuperacion' });
+    if (elegido.evento.telefono_finder) {
+        await enviarMensajeWhatsApp(elegido.evento.telefono_finder, `🎉 *El dueño confirmó que recuperó su ${objeto}.* ¡Gracias por tu ayuda, hiciste la diferencia!`);
+    }
+    await enviarMensajeWhatsApp(from, `🎉 ¡Genial! Marcamos tu ${objeto} como recuperado. Gracias por confiar en VUELVE.`);
     return true;
 }
 
@@ -287,7 +312,7 @@ async function enviarMensajeAnonimoYCerrar(from, sesion, mensajeTexto) {
         const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (mensaje anonimo)');
         if (llavero) {
             const { objeto: objetoMensaje } = infoCategoria(llavero.categoria);
-            const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu ${objetoMensaje}, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${mensajeTexto}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🔒 Para terminar esta conversación, escribí *F*.`;
+            const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu ${objetoMensaje}, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${mensajeTexto}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🎉 Cuando lo recuperes, escribí *RECUPERADO* para cerrar el caso.\n🔒 Para cortar la conversación sin haberlo recuperado, escribí *F*.`;
             if (evento.notificacion_pendiente) {
                 await repo.actualizarEvento(evento.id, { notificacion_pendiente: mensajeAlDueño });
             } else {
@@ -654,6 +679,11 @@ async function procesarMensajeWebhook(req, res) {
         if (messageData.type === 'text' && !sesion) {
             const textoPlano = messageData.text.body.trim();
             const textoUpper = textoPlano.toUpperCase();
+
+            const matchAtajoRecuperado = textoPlano.match(/^RECUPERADO(?:\s+(\d{1,2}|[A-Za-z0-9]{8}))?$/i);
+            if (matchAtajoRecuperado && await manejarAtajoRecuperado(from, matchAtajoRecuperado[1] || null)) {
+                return res.status(200).send('EVENT_RECEIVED');
+            }
 
             const matchAtajoF = textoPlano.match(/^F(?:\s+(\d{1,2}|[A-Za-z0-9]{8}))?$/i);
             if (matchAtajoF && await manejarAtajoF(from, matchAtajoF[1] || null)) {
