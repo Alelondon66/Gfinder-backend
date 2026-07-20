@@ -270,6 +270,26 @@ async function manejarUbicacion(from, sesion, messageData) {
     await repo.actualizarSesion(sesion.id, { estado: 'esperando_subopcion_encuentro' });
 }
 
+// Le manda el mensaje del finder al dueño (sin compartir números) y cierra
+// la sesión del finder. Se usa tanto cuando el finder escribió "H" solo y
+// después el mensaje aparte, como cuando lo mandó todo junto ("H mensaje").
+async function enviarMensajeAnonimoYCerrar(from, sesion, mensajeTexto) {
+    const evento = await repo.obtenerEventoPorId(sesion.evento_id);
+    if (evento) {
+        const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (mensaje anonimo)');
+        if (llavero) {
+            const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu llavero, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${mensajeTexto}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🔒 Para terminar esta conversación, escribí *F*.`;
+            if (evento.notificacion_pendiente) {
+                await repo.actualizarEvento(evento.id, { notificacion_pendiente: mensajeAlDueño });
+            } else {
+                await enviarMensajeWhatsApp(llavero.telefono_dueno, mensajeAlDueño);
+            }
+        }
+    }
+    await repo.cerrarSesion(sesion.id);
+    await enviarMensajeWhatsApp(from, "📲 Mensaje enviado. Te avisaremos si el dueño responde.\n\n_¿Querés agregar algo más? Escribí *H* seguido de tu mensaje (no alcanza con mandarlo solo)._");
+}
+
 async function manejarEstadoSesion(from, sesion, text, textUpper) {
     switch (sesion.estado) {
         case 'esperando_codigo_registro': {
@@ -388,7 +408,14 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
         }
 
         case 'esperando_subopcion_encuentro': {
-            if (textUpper === 'D') {
+            // Acepta "H <mensaje>" en un solo paso (igual que el atajo), por si
+            // el dueño ya le escribió al finder antes de que este elija D/H/F
+            // -- si no, "H mensaje" caía acá como opción inválida en vez de
+            // mandarse (bug reportado).
+            const matchHConMensaje = text.match(/^H\s+([\s\S]+)/i);
+            if (matchHConMensaje) {
+                await enviarMensajeAnonimoYCerrar(from, sesion, matchHConMensaje[1].trim());
+            } else if (textUpper === 'D') {
                 await repo.actualizarSesion(sesion.id, { estado: 'esperando_ubicacion_finder' });
                 await enviarMensajeWhatsApp(from, "📍 Compartinos tu ubicación (Clip ➡️ Ubicación) para indicarte la sucursal YPF más cercana:");
             } else if (textUpper === 'H') {
@@ -411,20 +438,7 @@ async function manejarEstadoSesion(from, sesion, text, textUpper) {
         }
 
         case 'esperando_mensaje_anonimo': {
-            const evento = await repo.obtenerEventoPorId(sesion.evento_id);
-            if (evento) {
-                const llavero = await repo.dbRead(supabase.from('llaveros').select('*').eq('id', evento.llavero_id).maybeSingle(), 'select llaveros (mensaje anonimo)');
-                if (llavero) {
-                    const mensajeAlDueño = `🔒 *Comunicación segura activada*\nEstás hablando con la persona que encontró tu llavero, sin compartir números de teléfono.\n\n💬 *Te escribió:* "${text}"\n\n✏️ Para responderle, escribí *H* seguido de tu mensaje. Por ejemplo:\n*H Gracias, ¿dónde puedo retirarlo?*\n\n🔒 Para terminar esta conversación, escribí *F*.`;
-                    if (evento.notificacion_pendiente) {
-                        await repo.actualizarEvento(evento.id, { notificacion_pendiente: mensajeAlDueño });
-                    } else {
-                        await enviarMensajeWhatsApp(llavero.telefono_dueno, mensajeAlDueño);
-                    }
-                }
-            }
-            await repo.cerrarSesion(sesion.id);
-            await enviarMensajeWhatsApp(from, "📲 Mensaje enviado. Te avisaremos si el dueño responde.\n\n_¿Querés agregar algo más? Escribí *H* seguido de tu mensaje (no alcanza con mandarlo solo)._");
+            await enviarMensajeAnonimoYCerrar(from, sesion, text);
             return;
         }
 

@@ -649,6 +649,22 @@ test('"H" solo, con sesión activa en el submenú de encuentro, se procesa como 
     assert.equal(repositorio.actualizarSesion.mock.calls[1].arguments[1].estado, 'esperando_mensaje_anonimo');
 });
 
+test('"H mensaje" en un solo paso, con sesión activa en el submenú de encuentro, manda el mensaje y cierra (bug reportado)', async () => {
+    repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
+        id: 1, telefono: '5492222222', estado: 'esperando_subopcion_encuentro',
+        evento_id: 300, ultima_interaccion: new Date()
+    }));
+
+    const res = crearRes();
+    await procesarMensajeWebhook(crearReq('5492222222', 'H te lo dejo en lomas'), res);
+
+    assert.equal(repositorio.cerrarSesion.mock.calls.length, 1);
+    assert.equal(repositorio.cerrarSesion.mock.calls[0].arguments[0], 1);
+    const [destino, texto] = notificaciones.enviarMensajeWhatsApp.mock.calls[0].arguments;
+    assert.equal(destino, '5492222222');
+    assert.match(texto, /Mensaje enviado/);
+});
+
 test('código incorrecto en el retiro descuenta intentos y bloquea al tercer error', async () => {
     repositorio.obtenerSesionActiva.mock.mockImplementation(async () => ({
         id: 1, telefono: '5491111111', estado: 'esperando_codigo_retiro',
